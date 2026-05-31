@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+downloads/*
+extracted/*
+reports/*
+!downloads/.gitkeep
+!extracted/.gitkeep
+!reports/.gitkeep
+quarantine/
+data/*cache*.json
+downloads/
+extracted/
+reports/
+data/jobs/
+data/usage_limits.json

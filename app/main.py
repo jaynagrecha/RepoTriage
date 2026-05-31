@@ -1,0 +1,624 @@
+from pathlib import Path
+import os
+from datetime import datetime, timezone, timedelta
+import asyncio
+import json
+import uuid
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from .modules.downloader import download_file, DownloadError
+from .modules.hash_engine import hash_file
+from .modules.file_type import guess_file_type
+from .modules.vt_lookup import lookup_file_hash, VTLookupError
+from .modules.extractor import extract_recursive, is_archive
+from .modules.ioc_extractor import extract_iocs_from_file, merge_iocs, classify_infrastructure
+from .modules.threatfox import enrich_iocs
+from .modules.malwarebazaar import enrich_files as enrich_malwarebazaar
+from .modules.urlhaus import enrich_iocs as enrich_urlhaus
+from .modules.abusech_connector import enrich_feodo, enrich_sslbl, abusech_summary
+from .modules.mitre_mapper import map_mitre
+from .modules.narrative import generate_attack_narrative
+from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
+from .modules.rate_limit import UsageLimiter, RateLimitExceeded
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
+
+app = FastAPI(title='RepoTriage', version='2.2B.0')
+app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
+
+USAGE_LIMITER = UsageLimiter(BASE_DIR)
+
+def get_client_ip(request: Request) -> str:
+    xff = request.headers.get('x-forwarded-for')
+    if xff:
+        return xff.split(',')[0].strip()
+    xrip = request.headers.get('x-real-ip')
+    if xrip:
+        return xrip.strip()
+    return request.client.host if request.client else 'unknown'
+
+def active_jobs_for_ip(ip: str) -> int:
+    count = 0
+    for job in JOBS.values():
+        if job.get('client_ip') == ip and job.get('status') in {'queued', 'running'}:
+            count += 1
+    return count
+
+class AnalyzeRequest(BaseModel):
+    file_url: str = Field(..., examples=['https://github.com/user/repo/blob/main/payload.zip'])
+
+
+def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
+    verdict = vt.get('verdict', 'unknown')
+    family = (vt.get('family') or {}).get('name', 'Unknown')
+    malicious = vt.get('malicious', 0)
+    suspicious = vt.get('suspicious', 0)
+    if vt.get('status') == 'not_configured':
+        vt_line = 'VirusTotal enrichment was skipped because VT_API_KEY is not configured.'
+    elif vt.get('status') == 'not_found':
+        vt_line = 'VirusTotal does not currently have a report for this file hash.'
+    else:
+        vt_line = f"VirusTotal verdict: {verdict} ({malicious} malicious / {suspicious} suspicious)."
+    return (
+        f"RepoTriage v2.2A acquired the GitHub-hosted file and calculated MD5/SHA1/SHA256.\n\n"
+        f"File: {meta.get('filename')}\n"
+        f"Type: {file_type}\n"
+        f"SHA256: {hashes.get('sha256')}\n\n"
+        f"{vt_line}\n"
+        f"Family/label: {family}.\n\n"
+        f"Archive extraction is enabled in v1.3. IOC extraction, external CTI, MITRE mapping, and infrastructure discovery are reserved for upcoming versions."
+    )
+
+
+
+def integrate_threatfox_infrastructure(infra: dict, threatfox: dict) -> dict:
+    """Merge ThreatFox classifications into the Infrastructure tab."""
+    infra = dict(infra or {})
+    infra.setdefault('probable_c2', [])
+    infra.setdefault('control_channels', [])
+    infra.setdefault('exfil_channels', [])
+    infra.setdefault('config_sources', [])
+    infra.setdefault('payload_delivery', [])
+    infra.setdefault('malware_downloads', [])
+    infra.setdefault('known_bad_infrastructure', [])
+
+    role_to_bucket = {
+        'Probable C2': 'probable_c2',
+        'Payload Delivery': 'payload_delivery',
+        'Malware Hosting': 'malware_downloads',
+        'Control Channel': 'control_channels',
+        'Exfiltration / Webhook Channel': 'exfil_channels',
+        'Credential Theft / Phishing Infrastructure': 'known_bad_infrastructure',
+    }
+    seen = set()
+    for bucket, rows in list(infra.items()):
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    seen.add((bucket, str(row.get('indicator')).lower()))
+
+    for item in (threatfox or {}).get('found', []) or []:
+        for m in item.get('matches', []) or []:
+            role = m.get('infrastructure_role') or 'ThreatFox Match'
+            bucket = role_to_bucket.get(role, 'known_bad_infrastructure')
+            indicator = m.get('ioc') or item.get('indicator')
+            key = (bucket, str(indicator).lower())
+            if not indicator or key in seen:
+                continue
+            seen.add(key)
+            infra.setdefault(bucket, []).append({
+                'indicator': indicator,
+                'type': role,
+                'confidence': m.get('infrastructure_confidence') or m.get('confidence_band') or 'Medium',
+                'source': 'ThreatFox',
+                'malware': m.get('malware'),
+                'threat_type': m.get('threat_type'),
+                'confidence_level': m.get('confidence_level'),
+                'first_seen': m.get('first_seen'),
+                'last_seen': m.get('last_seen'),
+                'reference': m.get('reference') or m.get('threatfox_link'),
+            })
+    return infra
+
+
+
+def integrate_abusech_infrastructure(infra: dict, urlhaus: dict, feodo: dict, sslbl: dict) -> dict:
+    """Merge URLHaus/Feodo/SSLBL matches into the Infrastructure tab."""
+    infra = dict(infra or {})
+    infra.setdefault('payload_delivery', [])
+    infra.setdefault('probable_c2', [])
+    infra.setdefault('known_bad_infrastructure', [])
+    seen = set()
+    for bucket, rows in list(infra.items()):
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    seen.add((bucket, str(row.get('indicator')).lower()))
+
+    for row in (urlhaus or {}).get('results', []) or []:
+        if not row.get('found'):
+            continue
+        indicator = row.get('url') or row.get('indicator') or row.get('host')
+        bucket = 'payload_delivery'
+        key = (bucket, str(indicator).lower())
+        if indicator and key not in seen:
+            seen.add(key)
+            infra[bucket].append({
+                'indicator': indicator,
+                'type': 'Payload Delivery / Malware URL',
+                'confidence': 'High',
+                'source': 'URLHaus',
+                'threat': row.get('threat'),
+                'families': row.get('families'),
+                'status': row.get('url_status'),
+                'reference': row.get('link'),
+            })
+
+    for row in (feodo or {}).get('matches', []) or []:
+        indicator = row.get('ip')
+        bucket = 'probable_c2'
+        key = (bucket, str(indicator).lower())
+        if indicator and key not in seen:
+            seen.add(key)
+            infra[bucket].append({
+                'indicator': indicator,
+                'type': 'Botnet C2',
+                'confidence': 'High',
+                'source': 'FeodoTracker',
+                'malware': row.get('malware'),
+                'status': row.get('status'),
+                'reference': 'https://feodotracker.abuse.ch/browse/',
+            })
+
+    for row in (sslbl or {}).get('matches', []) or []:
+        indicator = row.get('ip')
+        bucket = 'known_bad_infrastructure'
+        key = (bucket, str(indicator).lower())
+        if indicator and key not in seen:
+            seen.add(key)
+            infra[bucket].append({
+                'indicator': indicator,
+                'type': 'Malicious SSL / JA3 Infrastructure',
+                'confidence': 'High',
+                'source': 'SSLBL',
+                'ja3': row.get('ja3'),
+                'port': row.get('port'),
+                'reference': 'https://sslbl.abuse.ch/',
+            })
+    return infra
+
+@app.get('/')
+async def home():
+    return FileResponse(str(BASE_DIR / 'app' / 'static' / 'index.html'))
+
+JOBS: dict[str, dict] = {}
+JOBS_DIR = BASE_DIR / 'data' / 'jobs'
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+def _job_file(job_id: str) -> Path:
+    safe = ''.join(ch for ch in job_id if ch.isalnum() or ch in '-_')
+    return JOBS_DIR / f'{safe}.json'
+
+def _save_job(job_id: str) -> None:
+    try:
+        with _job_file(job_id).open('w', encoding='utf-8') as f:
+            json.dump(JOBS[job_id], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _load_job(job_id: str) -> dict | None:
+    if job_id in JOBS:
+        return JOBS[job_id]
+    p = _job_file(job_id)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+def _cleanup_old_jobs() -> None:
+    ttl_hours = int(os.getenv('JOB_TTL_HOURS', '24'))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+    for p in JOBS_DIR.glob('*.json'):
+        try:
+            data = json.loads(p.read_text(encoding='utf-8'))
+            ts = data.get('created_at') or data.get('updated_at')
+            if ts and datetime.fromisoformat(ts.replace('Z','+00:00')) < cutoff:
+                p.unlink(missing_ok=True)
+        except Exception:
+            continue
+
+@app.get('/api/health')
+async def health():
+    return {
+        'ok': True,
+        'app': 'RepoTriage',
+        'version': '2.2B-rate-limit.0',
+        'vt_configured': bool(os.getenv('VT_API_KEY')),
+        'analysis_mode': os.getenv('ANALYSIS_MODE', 'local_dev'),
+        'server_analysis_mode': os.getenv('SERVER_ANALYSIS_MODE', 'false').lower() == 'true',
+        'job_mode': True,
+        'rate_limit_enabled': USAGE_LIMITER.enabled,
+        'free_daily_analysis_limit': USAGE_LIMITER.free_daily_limit,
+        'burst_analysis_limit_per_minute': USAGE_LIMITER.burst_limit,
+    }
+
+
+async def _run_job(job_id: str, req: AnalyzeRequest) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    JOBS[job_id].update({'status': 'running', 'stage': 'analysis_started', 'updated_at': now})
+    _save_job(job_id)
+    try:
+        result = await analyze(req)
+        JOBS[job_id].update({
+            'status': 'completed',
+            'stage': 'completed',
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'result': result,
+            'error': None,
+        })
+    except Exception as e:
+        detail = getattr(e, 'detail', None) or str(e)
+        JOBS[job_id].update({
+            'status': 'failed',
+            'stage': 'failed',
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'error': str(detail),
+        })
+    _save_job(job_id)
+
+@app.get('/api/usage')
+async def usage_status(request: Request):
+    ip = get_client_ip(request)
+    admin_token = request.headers.get('x-admin-bypass-token')
+    is_admin = bool(USAGE_LIMITER.admin_bypass_token and admin_token == USAGE_LIMITER.admin_bypass_token)
+    return USAGE_LIMITER.get_status(ip, active_jobs_for_ip(ip), is_admin)
+
+@app.post('/api/jobs')
+async def create_job(req: AnalyzeRequest, request: Request):
+    _cleanup_old_jobs()
+    ip = get_client_ip(request)
+    admin_token = request.headers.get('x-admin-bypass-token')
+    try:
+        usage = USAGE_LIMITER.check_and_consume(ip, req.file_url, active_jobs_for_ip(ip), admin_token)
+    except RateLimitExceeded as e:
+        raise HTTPException(status_code=429, detail={'message': e.message, 'usage': e.status})
+    job_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    JOBS[job_id] = {
+        'job_id': job_id,
+        'status': 'queued',
+        'stage': 'queued',
+        'file_url': req.file_url,
+        'client_ip': ip,
+        'usage': usage,
+        'created_at': now,
+        'updated_at': now,
+        'result': None,
+        'error': None,
+        'safety': {
+            'user_endpoint_receives_samples': False,
+            'samples_downloaded_on_backend_only': True,
+            'analysis_mode': os.getenv('ANALYSIS_MODE', 'local_dev'),
+            'server_analysis_mode': os.getenv('SERVER_ANALYSIS_MODE', 'false').lower() == 'true',
+        },
+    }
+    _save_job(job_id)
+    asyncio.create_task(_run_job(job_id, req))
+    return {'job_id': job_id, 'status': 'queued', 'poll_url': f'/api/jobs/{job_id}', 'usage': usage}
+
+@app.get('/api/jobs/{job_id}')
+async def get_job(job_id: str):
+    job = _load_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return job
+
+
+@app.get('/api/jobs/{job_id}/export/json')
+async def export_job_json(job_id: str):
+    job = _load_job(job_id)
+    if not job or not job.get('result'):
+        raise HTTPException(status_code=404, detail='Completed job result not found')
+    return JSONResponse(job['result'])
+
+@app.get('/api/jobs/{job_id}/export/csv', response_class=PlainTextResponse)
+async def export_job_csv(job_id: str):
+    job = _load_job(job_id)
+    if not job or not job.get('result'):
+        raise HTTPException(status_code=404, detail='Completed job result not found')
+    return PlainTextResponse(export_csv(job['result']), media_type='text/csv')
+
+@app.get('/api/jobs/{job_id}/export/stix')
+async def export_job_stix(job_id: str):
+    job = _load_job(job_id)
+    if not job or not job.get('result'):
+        raise HTTPException(status_code=404, detail='Completed job result not found')
+    return JSONResponse(export_stix(job['result']))
+
+@app.get('/api/jobs/{job_id}/export/misp')
+async def export_job_misp(job_id: str):
+    job = _load_job(job_id)
+    if not job or not job.get('result'):
+        raise HTTPException(status_code=404, detail='Completed job result not found')
+    return JSONResponse(export_misp(job['result']))
+
+@app.get('/api/jobs/{job_id}/report/html', response_class=HTMLResponse)
+async def export_job_report_html(job_id: str):
+    job = _load_job(job_id)
+    if not job or not job.get('result'):
+        raise HTTPException(status_code=404, detail='Completed job result not found')
+    report = job['result'].get('analyst_report') or build_analyst_report(job['result'])
+    return HTMLResponse(report.get('html',''))
+
+@app.post('/api/analyze')
+async def analyze(req: AnalyzeRequest):
+    try:
+        meta = await download_file(req.file_url, BASE_DIR / 'quarantine' / 'downloads')
+        hashes = hash_file(meta['local_path'])
+        file_type = guess_file_type(meta['local_path'])
+        vt_result = await lookup_file_hash(hashes['sha256'], BASE_DIR)
+
+        max_depth = int(os.getenv('MAX_EXTRACT_DEPTH', '3'))
+        max_files = int(os.getenv('MAX_EXTRACT_FILES', '250'))
+        max_extract_bytes = int(os.getenv('MAX_EXTRACT_BYTES', '100000000'))
+        extraction = {
+            'enabled': True,
+            'root_is_archive': False,
+            'files': [],
+            'errors': [],
+            'max_depth': max_depth,
+            'max_files': max_files,
+        }
+
+        # Always include the GitHub-hosted root file first.
+        inventory = [{
+            'filename': meta['filename'],
+            'path': meta.get('path') or meta['filename'],
+            'local_path': meta['local_path'],
+            'file_type': file_type,
+            'size_bytes': hashes.get('size_bytes'),
+            'md5': hashes.get('md5'),
+            'sha1': hashes.get('sha1'),
+            'sha256': hashes.get('sha256'),
+            'vt_verdict': vt_result.get('verdict'),
+            'vt_malicious': vt_result.get('malicious'),
+            'vt_suspicious': vt_result.get('suspicious'),
+            'vt_link': vt_result.get('permalink'),
+            'parent_archive': None,
+            'depth': 0,
+            'is_archive': is_archive(meta['local_path']),
+            'iocs': extract_iocs_from_file(meta['local_path']),
+        }]
+
+        # If root file is an archive, extract it recursively and analyze every child file.
+        if is_archive(meta['local_path']):
+            extraction = extract_recursive(
+                meta['local_path'],
+                BASE_DIR / 'quarantine' / 'extracted',
+                max_depth=max_depth,
+                max_files=max_files,
+                max_total_bytes=max_extract_bytes,
+            )
+            for child in extraction.get('files', []):
+                child_path = child.get('local_path')
+                # v1.9.4 metadata-first analysis: every archive member is retained
+                # even if local AV blocks/quarantines the neutral file on disk.
+                try:
+                    if child_path and Path(child_path).exists():
+                        child_hashes = hash_file(child_path)
+                        child_type = guess_file_type(child_path)
+                        child_iocs = extract_iocs_from_file(child_path)
+                    else:
+                        child_hashes = {
+                            'md5': child.get('md5'),
+                            'sha1': child.get('sha1'),
+                            'sha256': child.get('sha256'),
+                            'size_bytes': child.get('size_bytes'),
+                        }
+                        child_type = guess_file_type(child.get('original_name') or child.get('filename') or 'sample.bin')
+                        child_iocs = {}
+                    if not child_hashes.get('sha256'):
+                        raise ValueError('missing SHA256 after extraction')
+                    child_vt = await lookup_file_hash(child_hashes['sha256'], BASE_DIR)
+                    inventory.append({
+                        'filename': child.get('filename'),
+                        'original_name': child.get('original_name'),
+                        'stored_name': child.get('stored_name'),
+                        'path': child.get('path') or child.get('filename'),
+                        'local_path': child_path,
+                        'extracted_to_disk': child.get('extracted_to_disk'),
+                        'blocked_by_local_av': child.get('blocked_by_local_av'),
+                        'analysis_note': child.get('analysis_note'),
+                        'file_type': child_type,
+                        'size_bytes': child_hashes.get('size_bytes'),
+                        'md5': child_hashes.get('md5'),
+                        'sha1': child_hashes.get('sha1'),
+                        'sha256': child_hashes.get('sha256'),
+                        'vt_verdict': child_vt.get('verdict'),
+                        'vt_malicious': child_vt.get('malicious'),
+                        'vt_suspicious': child_vt.get('suspicious'),
+                        'vt_link': child_vt.get('permalink'),
+                        'parent_archive': child.get('parent_archive'),
+                        'depth': child.get('depth'),
+                        'is_archive': child.get('is_archive'),
+                        'iocs': child_iocs,
+                    })
+                except Exception as e:
+                    display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
+                    extraction.setdefault('errors', []).append(f"{display_name}: analysis failed after extraction: {e.__class__.__name__}: {str(e)[:180]}")
+
+        malicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'malicious')
+        suspicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'suspicious')
+        child_inventory = inventory[1:]
+        child_malicious_count = sum(1 for x in child_inventory if str(x.get('vt_verdict','')).lower() == 'malicious')
+        child_suspicious_count = sum(1 for x in child_inventory if str(x.get('vt_verdict','')).lower() == 'suspicious')
+        unknown_count = sum(1 for x in inventory if 'unknown' in str(x.get('vt_verdict','')).lower() or not x.get('vt_verdict'))
+        extracted_count = max(0, len(inventory) - 1)
+        ioc_sources = [{'path': x.get('path') or x.get('filename'), 'iocs': x.get('iocs') or {}} for x in inventory]
+        merged_iocs = merge_iocs(ioc_sources)
+        infra = classify_infrastructure(merged_iocs)
+        threatfox = await enrich_iocs(merged_iocs, BASE_DIR)
+        malwarebazaar = await enrich_malwarebazaar(inventory, BASE_DIR)
+        urlhaus = await enrich_urlhaus(merged_iocs, BASE_DIR)
+        feodo = await enrich_feodo(merged_iocs, BASE_DIR)
+        sslbl = await enrich_sslbl(merged_iocs, BASE_DIR)
+        abusech = abusech_summary(threatfox, malwarebazaar, urlhaus, feodo, sslbl)
+        threat_intel_bundle = {'abusech': abusech, 'threatfox': threatfox, 'malwarebazaar': malwarebazaar, 'urlhaus': urlhaus, 'feodo': feodo, 'sslbl': sslbl}
+        mitre = map_mitre(inventory, merged_iocs, threat_intel_bundle, infra, vt_result.get('family') or {'name':'Unknown'})
+        infra = integrate_threatfox_infrastructure(infra, threatfox)
+        infra = integrate_abusech_infrastructure(infra, urlhaus, feodo, sslbl)
+        ioc_total = sum(len(v) for k, v in merged_iocs.items() if k != 'ioc_details')
+        now = datetime.now(timezone.utc).isoformat()
+
+        pipeline = {
+            'downloaded': True,
+            'hashed': True,
+            'vt_lookup': vt_result.get('status') not in {'not_configured'},
+            'archive_extraction': bool(extraction.get('root_is_archive')),
+            'children_hashed': extracted_count > 0,
+            'children_vt_lookup': extracted_count > 0 and vt_result.get('status') != 'not_configured',
+            'ioc_extraction': True,
+            'threat_intel': True,
+            'mitre_mapping': True,
+            'executive_summary': True,
+            'cti_fusion': True,
+        }
+
+        summary = build_summary(meta, hashes, file_type, vt_result)
+        if ioc_total:
+            summary += f"\n\nIOC extraction: {ioc_total} indicator(s) extracted across {len([x for x in ioc_sources if sum(len(v) for v in (x.get('iocs') or {}).values())])} file(s)."
+        if threatfox.get('summary', {}).get('found'):
+            tf_sum = threatfox.get('summary', {})
+            families = ', '.join(tf_sum.get('malware_families') or []) or 'Unknown'
+            summary += f"\n\nThreatFox enrichment: {tf_sum.get('found', 0)} IOC(s) matched across {tf_sum.get('match_count', 0)} row(s). Families observed: {families}. Probable C2: {tf_sum.get('probable_c2', 0)}. Payload delivery: {tf_sum.get('payload_delivery', 0)}."
+
+        mb_sum = malwarebazaar.get('summary', {})
+        if mb_sum.get('found'):
+            mb_families = ', '.join(mb_sum.get('families') or []) or 'Unknown'
+            summary += f"\n\nMalwareBazaar enrichment: {mb_sum.get('found', 0)} known sample(s) matched. Families/signatures observed: {mb_families}."
+
+        uh_sum = urlhaus.get('summary', {})
+        if uh_sum.get('found'):
+            uh_families = ', '.join(uh_sum.get('families') or []) or 'Unknown'
+            summary += f"\n\nURLHaus enrichment: {uh_sum.get('found', 0)} URL/domain indicator(s) matched. Active payload URLs: {uh_sum.get('active_urls', 0)}. Families observed: {uh_families}."
+
+        if feodo.get('summary', {}).get('matches') or sslbl.get('summary', {}).get('matches'):
+            summary += f"\n\nAbuseCH infrastructure feeds: FeodoTracker C2 matches: {feodo.get('summary', {}).get('matches', 0)}. SSLBL matches: {sslbl.get('summary', {}).get('matches', 0)}."
+
+        mitre_sum = mitre.get('summary', {}) if isinstance(mitre, dict) else {}
+        if mitre_sum.get('count'):
+            summary += f"\n\nMITRE ATT&CK mapping: {mitre_sum.get('count')} technique(s) across {mitre_sum.get('tactics')} tactic(s). High-confidence mappings: {mitre_sum.get('high_confidence', 0)}."
+
+        if extraction.get('root_is_archive'):
+            summary += f"\n\nArchive extraction: {extracted_count} child file(s) extracted/listed. Malicious children: {child_malicious_count}. Suspicious children: {child_suspicious_count}."
+            if extraction.get('errors'):
+                summary += f"\nExtraction notes/errors: {len(extraction.get('errors', []))}."
+
+        preliminary = {
+            'source': meta,
+            'root_file': {'filename': meta['filename'], 'path': meta.get('path'), 'file_type': file_type, **hashes},
+            'vt': vt_result,
+            'extraction': extraction,
+            'file_stats': {
+                'total_listed': len(inventory),
+                'root_files': 1,
+                'extracted_children': extracted_count,
+                'malicious': malicious_count,
+                'suspicious': suspicious_count,
+                'child_malicious': child_malicious_count,
+                'child_suspicious': child_suspicious_count,
+                'unknown': unknown_count,
+                'errors': len(extraction.get('errors', [])),
+                'iocs': ioc_total,
+            },
+            'files': inventory,
+            'iocs': merged_iocs,
+            'ioc_sources': ioc_sources,
+            'threat_intel': threat_intel_bundle,
+            'family': vt_result.get('family') or {'name': 'Unknown', 'confidence': 0},
+            'mitre': mitre,
+            'infrastructure': infra,
+        }
+        attack_narrative = generate_attack_narrative(preliminary)
+        preliminary['attack_narrative'] = attack_narrative
+        cti_dashboard = build_cti_dashboard(preliminary)
+        infrastructure_graph = build_infrastructure_graph(preliminary)
+        related_samples = discover_related_samples(preliminary)
+        campaign_analysis = build_campaign_analysis(preliminary)
+        threat_actor_assessment = build_threat_actor_assessment(preliminary)
+        correlation_matrix = build_correlation_matrix(preliminary)
+        preliminary['cti_dashboard'] = cti_dashboard
+        preliminary['infrastructure_graph'] = infrastructure_graph
+        preliminary['related_samples'] = related_samples
+        preliminary['campaign_analysis'] = campaign_analysis
+        preliminary['threat_actor_assessment'] = threat_actor_assessment
+        preliminary['correlation_matrix'] = correlation_matrix
+        analyst_report = build_analyst_report(preliminary)
+        summary += "\n\n---\n\n" + attack_narrative.get('markdown', '')
+
+        return {
+            'status': 'completed',
+            'version': '2.2B-rate-limit.0',
+            'analyzed_at': now,
+            'source': meta,
+            'root_file': {
+                'filename': meta['filename'],
+                'path': meta.get('path'),
+                'file_type': file_type,
+                **hashes,
+            },
+            'pipeline': pipeline,
+            'safety': {
+                'analysis_mode': os.getenv('ANALYSIS_MODE', 'local_dev'),
+                'server_analysis_mode': os.getenv('SERVER_ANALYSIS_MODE', 'false').lower() == 'true',
+                'local_sample_warning': os.getenv('SERVER_ANALYSIS_MODE', 'false').lower() != 'true',
+                'metadata_first_extraction': True,
+                'user_endpoint_receives_samples': False,
+            },
+            'vt': vt_result,
+            'extraction': extraction,
+            'file_stats': {
+                'total_listed': len(inventory),
+                'root_files': 1,
+                'extracted_children': extracted_count,
+                'malicious': malicious_count,
+                'suspicious': suspicious_count,
+                'child_malicious': child_malicious_count,
+                'child_suspicious': child_suspicious_count,
+                'unknown': unknown_count,
+                'errors': len(extraction.get('errors', [])),
+                'iocs': ioc_total,
+            },
+            'files': inventory,
+            'iocs': merged_iocs,
+            'ioc_sources': ioc_sources,
+            'threat_intel': threat_intel_bundle,
+            'family': vt_result.get('family') or {'name': 'Unknown', 'confidence': 0},
+            'mitre': mitre,
+            'infrastructure': infra,
+            'attack_narrative': attack_narrative,
+            'cti_dashboard': cti_dashboard,
+            'infrastructure_graph': infrastructure_graph,
+            'related_samples': related_samples,
+            'campaign_analysis': campaign_analysis,
+            'threat_actor_assessment': threat_actor_assessment,
+            'correlation_matrix': correlation_matrix,
+            'analyst_report': analyst_report,
+            'exports_stix': export_stix(preliminary),
+            'exports_misp': export_misp(preliminary),
+            'exports_available': ['json', 'csv', 'stix', 'misp', 'html_report'],
+            'summary': summary,
+        }
+    except VTLookupError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except DownloadError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

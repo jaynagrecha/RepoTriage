@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+httpx==0.28.1
+python-dotenv==1.0.1
+python-multipart==0.0.19
+
+py7zr==0.22.0
+rarfile==4.2

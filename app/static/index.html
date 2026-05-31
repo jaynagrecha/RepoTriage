@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RepoTriage</title>
+  <style>
+    :root{
+      --bg:#061016;--bg2:#0b1a23;--card:#0d1b24;--card2:#07151d;--muted:#8da6b3;--text:#e9f6fb;
+      --accent:#42e8b4;--accent2:#5cb7ff;--bad:#ff6262;--warn:#ffd166;--border:#1d3644;--soft:#102633
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at top left,#123244 0,#071016 38%,#05090d 100%);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;font-size:14px}
+    a{color:#67d9ff}.wrap{max-width:1480px;margin:auto;padding:28px}.hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;margin-bottom:22px}.brand h1{font-size:44px;margin:0;letter-spacing:-1.5px}.brand p{margin:8px 0 0;color:var(--muted)}.pill{border:1px solid var(--border);padding:8px 12px;border-radius:999px;color:var(--accent);background:#07151c;white-space:nowrap}
+    .panel{background:linear-gradient(180deg,rgba(13,27,36,.96),rgba(8,17,23,.96));border:1px solid var(--border);border-radius:20px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.35);margin-bottom:18px}.inputrow{display:grid;grid-template-columns:1fr auto;gap:12px}input,textarea,button{font:inherit}input{width:100%;background:#061019;color:var(--text);border:1px solid var(--border);border-radius:14px;padding:14px 16px;outline:none}button{background:linear-gradient(135deg,var(--accent),#39b9ff);color:#001016;border:none;border-radius:14px;padding:13px 18px;font-weight:800;cursor:pointer}.small{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.45}
+    .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.card{background:#081722;border:1px solid var(--border);border-radius:16px;padding:14px;min-width:0}.card .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.card .v{font-size:22px;font-weight:800;margin-top:6px;overflow-wrap:anywhere}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.tab{background:#07151d;border:1px solid var(--border);color:var(--muted);padding:9px 12px;border-radius:12px;cursor:pointer}.tab.active{color:#001016;background:var(--accent);border-color:var(--accent)}.tabbody{display:none}.tabbody.active{display:block}pre{white-space:pre-wrap;background:#050d13;border:1px solid var(--border);padding:14px;border-radius:14px;overflow:auto}.ok{color:var(--accent)}.pending{color:var(--warn)}.err{color:var(--bad)}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.status{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.step{border:1px solid var(--border);border-radius:999px;padding:7px 10px;color:var(--muted)}.step.done{color:var(--accent);border-color:#1f8f72}.step.todo{color:var(--warn)}
+    .badge{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;white-space:nowrap}.badge.bad{color:var(--bad);border-color:#804040;background:rgba(255,98,98,.08)}.badge.warn{color:var(--warn);border-color:#806d2d;background:rgba(255,209,102,.08)}.badge.ok{color:var(--accent);border-color:#1f8f72;background:rgba(66,232,180,.08)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.subhead{margin:18px 0 8px;color:var(--accent)}
+    .tablewrap{width:100%;overflow:auto;border:1px solid var(--border);border-radius:14px;background:#061018}.filetable{width:100%;border-collapse:separate;border-spacing:0;min-width:980px}.filetable td,.filetable th{border-bottom:1px solid var(--border);padding:10px 12px;text-align:left;vertical-align:top}.filetable th{color:var(--muted);font-size:12px;text-transform:uppercase;background:#081722;position:sticky;top:0;z-index:1}.filetable tr:last-child td{border-bottom:0}.file-path{font-weight:700;color:#e9f6fb;max-width:420px;word-break:break-word}.file-sub{font-size:12px;color:var(--muted);margin-top:4px}.hashcell{max-width:280px}.hashline{display:flex;gap:7px;margin:3px 0}.hashlabel{color:var(--muted);width:46px;flex:0 0 46px}.hashval{word-break:break-all}.group{border:1px solid var(--border);background:rgba(8,23,34,.75);border-radius:18px;margin:14px 0;overflow:hidden}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:linear-gradient(90deg,#0b2430,#07151d);border-bottom:1px solid var(--border)}.group-title{font-weight:900;font-size:16px}.group-meta{color:var(--muted);font-size:13px}.root-card{display:grid;grid-template-columns:1.6fr .9fr .8fr .8fr;gap:12px;align-items:start}.info-box{background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px;min-width:0}.info-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.info-value{font-weight:800;margin-top:6px;word-break:break-word}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 12px}.filter{max-width:360px;padding:10px 12px}.muted{color:var(--muted)}
+    @media(max-width:1000px){.cards{grid-template-columns:1fr 1fr}.inputrow,.grid2,.root-card{grid-template-columns:1fr}.hero{display:block}.brand h1{font-size:36px}}
+  details.rel{margin:8px 0;border:1px solid var(--border);border-radius:12px;padding:8px;background:#061018}details.rel summary{cursor:pointer;color:var(--accent)}.graphwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px}.nodebox{border:1px solid var(--border);background:#061018;border-radius:12px;padding:10px;margin:6px 0}.nodebox.sample{border-color:#42e8b4}.nodebox.family{border-color:#ffd166}.nodebox.infrastructure{border-color:#ff6262}.edge{font-size:12px;color:var(--muted);margin-left:14px}.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.btnrow button{padding:10px 12px}
+    .graphcanvas{position:relative;min-height:620px;background:radial-gradient(circle at center,#0b2632 0,#061018 70%);border:1px solid var(--border);border-radius:18px;overflow:hidden}
+    .graphsvg{width:100%;height:620px;display:block}
+    .g-node{cursor:pointer;filter:drop-shadow(0 8px 16px rgba(0,0,0,.35))}.g-node circle{stroke-width:2}.g-label{font-size:12px;font-weight:800;fill:#e9f6fb;paint-order:stroke;stroke:#061018;stroke-width:4px;stroke-linejoin:round}.g-sub{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.g-edge{stroke:#2b5a6d;stroke-width:1.6;opacity:.85}.g-edge-label{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:11px;height:11px;border-radius:50%;display:inline-block}.detailpane{margin-top:12px;background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px}.graph-note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B CTI UX Polish</div></div>
+    <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub file URL: https://github.com/user/repo/blob/main/payload.zip"/><button onclick="analyze()">Analyze</button></div><div class="small">v2.2B improves analyst reporting, adds a real interactive infrastructure graph, removes duplicated report sections, and separates system notes from analyst actions. Browser submits only a GitHub file URL; backend/worker downloads and analyzes samples server-side and returns metadata/results only. In local-dev mode, your machine is still the backend.</div><div id="status" class="status"></div></div>
+    <div id="results" style="display:none">
+      <div class="cards" id="cards"></div>
+      <div class="panel"><div class="tabs" id="tabs"></div><div id="tabcontent"></div></div>
+    </div>
+  </div>
+<script>
+const tabNames=['Overview','Files','CTI Summary','Campaign Analysis','Threat Actor','Correlation Matrix','Infrastructure Graph','Related Samples','Exports','Analyst Report','VirusTotal','AbuseCH','ThreatFox','MalwareBazaar','URLHaus','Feodo','SSLBL','Infrastructure','MITRE ATT&CK','Attack Narrative','Executive Summary','Raw JSON'];let current=null;let currentJobId=null;
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function verdictClass(v){v=String(v||'').toLowerCase(); if(v.includes('malicious'))return 'bad'; if(v.includes('suspicious'))return 'warn'; if(v.includes('clean'))return 'ok'; return ''}
+function fmtBytes(n){n=Number(n||0); if(!n)return '0 B'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return `${n.toFixed(i?1:0)} ${u[i]}`}
+function shortHash(h){h=String(h||''); return h?`${h.slice(0,12)}…${h.slice(-10)}`:'-'}
+function vtBadge(v){return `<span class="badge ${verdictClass(v)}">${esc(v||'unknown')}</span>`}
+function steps(mode){const el=document.getElementById('status'); const names=['Downloaded','SHA256 Generated','VT Checked','Archive Extracted','Children VT Checked','IOCs Extracted','ThreatFox Queried','MalwareBazaar Queried','URLHaus Queried','Feodo/SSLBL Checked','Executive Summary Generated'];el.innerHTML=names.map((n,i)=>`<span class="step ${mode==='done'||i<8?'done':(mode==='run'?'todo':'')}">${mode==='run'&&i>=8?'○':'✓'} ${n}</span>`).join('')}
+async function analyze(){
+ const url=document.getElementById('fileUrl').value.trim();
+ if(!url)return alert('Paste a GitHub file URL');
+ steps('run');
+ document.getElementById('results').style.display='none';
+ const st=document.getElementById('status');
+ try{
+   st.innerHTML='<span class="step todo">○ Creating server-side analysis job...</span>';
+   const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_url:url})});
+   const j=await r.json();
+   if(!r.ok)throw new Error(j.detail||'Job creation failed');
+   const jobId=j.job_id; currentJobId=jobId;
+   let attempts=0;
+   const maxAttempts=240; // roughly 4 minutes at 1s polling
+   while(attempts<maxAttempts){
+     attempts++;
+     const pr=await fetch(`/api/jobs/${jobId}`);
+     const pj=await pr.json();
+     if(!pr.ok)throw new Error(pj.detail||'Job polling failed');
+     st.innerHTML=`<span class="step todo">○ Job ${esc(jobId.slice(0,8))}: ${esc(pj.status)} · ${esc(pj.stage||'')}</span>`;
+     if(pj.status==='completed'){
+       current=pj.result;
+       steps('done');
+       render(pj.result);
+       document.getElementById('results').scrollIntoView({behavior:'smooth'});
+       return;
+     }
+     if(pj.status==='failed') throw new Error(pj.error||'Analysis job failed');
+     await new Promise(res=>setTimeout(res,1000));
+   }
+   throw new Error('Analysis timed out waiting for worker result');
+ }catch(e){document.getElementById('status').innerHTML=`<span class="err">${esc(e.message)}</span>`}
+}
+function render(j){document.getElementById('results').style.display='block';const f=j.root_file||{}, fs=j.file_stats||{}, c=j.cti_dashboard||{}, ca=j.campaign_analysis||{}, ta=j.threat_actor_assessment||{};document.getElementById('cards').innerHTML=`<div class="card"><div class="k">Overall Risk</div><div class="v ${c.risk==='Critical'||c.risk==='High'?'err':(c.risk==='Medium'?'pending':'ok')}">${esc(c.risk||j.vt?.verdict||'unknown')}</div></div><div class="card"><div class="k">Primary Family</div><div class="v">${esc(c.primary_family||j.family?.name||'Unknown')}</div></div><div class="card"><div class="k">Campaign</div><div class="v">${esc(ca.candidate||'Unknown')}</div><div class="small">${esc(ca.confidence_band||'Low')} · ${esc(ca.confidence_score||0)}%</div></div><div class="card"><div class="k">Threat Actor</div><div class="v">${esc(ta.primary_assessment||'Unknown')}</div><div class="small">${esc(ta.confidence_band||'Low')} · ${esc(ta.confidence_score||0)}%</div></div><div class="card"><div class="k">Malicious Files</div><div class="v ${fs.malicious?'err':''}">${esc(fs.malicious||0)}</div><div class="small">${esc(fs.total_listed||1)} total listed</div></div>`
+const tabs=document.getElementById('tabs');tabs.innerHTML=tabNames.map((t,i)=>`<button class="tab ${i==0?'active':''}" onclick="showTab(${i})">${t}</button>`).join('');document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');}
+function showTab(i){document.querySelectorAll('.tab').forEach((e,n)=>e.classList.toggle('active',n===i));document.querySelectorAll('.tabbody').forEach((e,n)=>e.classList.toggle('active',n===i))}
+function displayName(x){return x.original_name || x.filename || x.path || 'file'}
+function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) sub.push(x.filename); if(x.stored_name) sub.push('stored as: '+x.stored_name); if(x.blocked_by_local_av) sub.push('local AV blocked/quarantined storage; hash captured in-memory'); if(x.analysis_note) sub.push(x.analysis_note); return `<tr><td><div class="file-path">${esc(displayName(x))}</div><div class="file-sub">${esc(sub.join(' · '))}</div></td><td>${esc(x.file_type||'-')}</td><td>${fmtBytes(x.size_bytes)}</td><td class="hashcell mono"><div class="hashline"><span class="hashlabel">MD5</span><span class="hashval">${esc(shortHash(x.md5))}</span></div><div class="hashline"><span class="hashlabel">SHA1</span><span class="hashval">${esc(shortHash(x.sha1))}</span></div><div class="hashline"><span class="hashlabel">SHA256</span><span class="hashval">${esc(shortHash(x.sha256))}</span></div></td><td>${vtBadge(x.vt_verdict)}<div class="file-sub">${Number(x.vt_malicious||0)} malicious / ${Number(x.vt_suspicious||0)} suspicious</div></td><td>${x.vt_link?`<a href="${esc(x.vt_link)}" target="_blank">VT Report</a>`:'-'}</td></tr>`}
+function fileTable(rows){return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>Size</th><th>Hashes</th><th>VT Verdict</th><th>Link</th></tr>${rows.map(fileRow).join('')||'<tr><td colspan="6">No files listed.</td></tr>'}</table></div>`}
+function groupedFilesHtml(j){const files=j.files||[];const root=files.filter(x=>!x.parent_archive);const children=files.filter(x=>x.parent_archive);const groups={};children.forEach(x=>{const p=x.parent_archive||'Extracted Children';(groups[p] ||= []).push(x)});
+let html=`<div class="toolbar"><div><b>File Inventory</b><div class="small">Grouped by root archive / parent archive. Every file is hashed and checked against VT when configured.</div></div><input class="filter" id="fileFilter" oninput="filterFiles()" placeholder="Filter files..."/></div>`;
+html+=`<div class="group"><div class="group-head"><div><div class="group-title">Root File</div><div class="group-meta">Original GitHub-hosted file submitted to RepoTriage</div></div><span class="badge ${root.some(x=>String(x.vt_verdict).includes('malicious'))?'bad':'ok'}">${root.length} file</span></div><div style="padding:14px">${fileTable(root)}</div></div>`;
+Object.entries(groups).forEach(([parent,rows],idx)=>{const mal=rows.filter(x=>String(x.vt_verdict).toLowerCase().includes('malicious')).length; const arc=rows.filter(x=>x.is_archive).length; html+=`<div class="group file-group"><div class="group-head"><div><div class="group-title">Children of Archive ${idx+1}</div><div class="group-meta mono">${esc(parent)}</div></div><div><span class="badge">${rows.length} files</span><span class="badge ${mal?'bad':'ok'}">${mal} malicious</span>${arc?`<span class="badge warn">${arc} nested archive(s)</span>`:''}</div></div><div style="padding:14px">${fileTable(rows)}</div></div>`});
+if((j.extraction?.errors||[]).length){html+=`<h3 class="subhead">Extraction Issues</h3><div class="tablewrap"><table class="filetable"><tr><th>Issue</th></tr>${(j.extraction.errors||[]).map(e=>`<tr><td class="err mono">${esc(e)}</td></tr>`).join('')}</table></div>`} return html}
+function filterFiles(){const q=(document.getElementById('fileFilter')?.value||'').toLowerCase();document.querySelectorAll('.filetable tr').forEach((tr,i)=>{if(i===0)return;tr.style.display=tr.innerText.toLowerCase().includes(q)?'':'none'})}
+
+function listBlock(title, items, cls=''){
+  const rows=(items||[]).map(x=>{
+    if(typeof x==='string') return `<div class="iocitem ${cls}"><span class="mono">${esc(x)}</span></div>`;
+    return `<div class="iocitem ${cls}"><span class="mono">${esc(x.indicator||JSON.stringify(x))}</span><div class="small">${esc(x.type||'')} ${esc(x.confidence?('· '+x.confidence):'')} ${esc(x.reason?('· '+x.reason):'')} ${x.sources?('· source: '+esc((x.sources||[]).join(', '))):''}</div></div>`
+  }).join('') || '<div class="small">None observed.</div>';
+  return `<div class="iocbox"><h3 class="subhead">${esc(title)} <span class="badge">${(items||[]).length}</span></h3>${rows}</div>`
+}
+function infraHtml(j){
+  const i=j.iocs||{}, d=i.ioc_details||{}, infra=j.infrastructure||{};
+  return `<div class="cards"><div class="card"><div class="k">URLs</div><div class="v">${(i.urls||[]).length}</div></div><div class="card"><div class="k">Domains</div><div class="v">${(i.domains||[]).length}</div></div><div class="card"><div class="k">IPs</div><div class="v">${(i.ips||[]).length}</div></div><div class="card"><div class="k">Exfil Channels</div><div class="v">${(infra.exfil_channels||[]).length}</div></div><div class="card"><div class="k">Probable C2</div><div class="v ${((infra.probable_c2||[]).length)?'err':''}">${(infra.probable_c2||[]).length}</div></div></div>
+  <div class="grid2">${listBlock('Probable C2 / Staging', infra.probable_c2||[], 'bad')}${listBlock('Payload Delivery', infra.payload_delivery||[], 'bad')}${listBlock('Malware Downloads', infra.malware_downloads||[], 'bad')}${listBlock('Known Bad Infrastructure', infra.known_bad_infrastructure||[], 'bad')}${listBlock('Control Channels', infra.control_channels||[])}${listBlock('Exfil Channels', infra.exfil_channels||[], 'bad')}${listBlock('Config / Staging Sources', infra.config_sources||[])}</div>
+  <h3 class="subhead">Extracted Indicator Inventory</h3>
+  <div class="grid2">${listBlock('URLs', d.urls||i.urls||[])}${listBlock('Domains', d.domains||i.domains||[])}${listBlock('Public IPs', d.ips||i.ips||[])}${listBlock('Emails', d.emails||i.emails||[])}${listBlock('Discord Webhooks', d.discord_webhooks||i.discord_webhooks||[], 'bad')}${listBlock('Telegram', d.telegram||i.telegram||[])}${listBlock('Wallets', d.wallets||i.wallets||[])}</div>
+  <h3 class="subhead">Rejected / Low-Quality Candidates</h3>
+  <div class="grid2">${listBlock('Rejected Emails', d.rejected_emails||[])}${listBlock('Rejected Domains', d.rejected_domains||[])}</div>`
+}
+
+
+
+function severityBadge(conf){const n=parseInt(conf||0);let c=''; if(n>=80)c='bad'; else if(n>=50)c='warn'; else c=''; return `<span class="badge ${c}">${esc(conf??'-')}</span>`}
+function roleBadge(role){let c=''; const r=(role||'').toLowerCase(); if(r.includes('c2')||r.includes('exfil'))c='bad'; else if(r.includes('payload')||r.includes('malware'))c='warn'; else c='ok'; return `<span class="badge ${c}">${esc(role||'-')}</span>`}
+function threatFoxFlat(tf){const flat=[];(tf.found||[]).forEach(r=>{(r.matches||[]).forEach(m=>flat.push({source_indicator:r.indicator, indicator_type:r.indicator_type, ...m}))});return flat}
+function threatFoxTable(rows){
+  const flat=[];(rows||[]).forEach(r=>{(r.matches||[]).forEach(m=>flat.push({source_indicator:r.indicator, indicator_type:r.indicator_type, ...m}))});
+  const body=flat.map(x=>`<tr><td><div class="file-path mono">${esc(x.ioc||x.source_indicator)}</div><div class="file-sub">queried: ${esc(x.source_indicator||'-')} · ${esc(x.ioc_type||x.indicator_type||'-')}</div></td><td>${esc(x.malware||x.malware_printable||'Unknown')}</td><td>${roleBadge(x.infrastructure_role)}</td><td>${esc(x.threat_type||'-')}</td><td>${severityBadge(x.confidence_level)}</td><td>${esc(x.first_seen||'-')}</td><td>${esc(x.last_seen||'-')}</td><td>${(x.tags||[]).map(t=>`<span class="badge ok">${esc(t)}</span>`).join('')||'-'}</td><td>${x.threatfox_link?`<a target="_blank" href="${esc(x.threatfox_link)}">ThreatFox</a>`:''} ${x.reference?`<a target="_blank" href="${esc(x.reference)}">Ref</a>`:'-'}</td></tr>`).join('') || '<tr><td colspan="9">No ThreatFox matches found for extracted IOCs.</td></tr>';
+  return `<div class="tablewrap"><table class="filetable"><tr><th>Indicator</th><th>Malware</th><th>Infra Role</th><th>Threat Type</th><th>Confidence</th><th>First Seen</th><th>Last Seen</th><th>Tags</th><th>Links</th></tr>${body}</table></div>`
+}
+function relationshipBlock(title, obj){
+  const keys=Object.keys(obj||{}); if(!keys.length)return `<div class="iocbox"><h3 class="subhead">${esc(title)} <span class="badge">0</span></h3><div class="small">No relationships observed.</div></div>`;
+  return `<div class="iocbox"><h3 class="subhead">${esc(title)} <span class="badge">${keys.length}</span></h3>`+keys.map(k=>`<details class="rel"><summary><b>${esc(k)}</b> <span class="badge">${(obj[k]||[]).length}</span></summary>${(obj[k]||[]).slice(0,20).map(x=>`<div class="iocitem"><span class="mono">${esc(x.ioc||x.source_indicator||'-')}</span><div class="small">${esc(x.threat_type||'-')} · ${esc(x.infrastructure_role||'-')} · confidence ${esc(x.confidence_level??'-')} · ${esc(x.first_seen||'')}</div></div>`).join('')}</details>`).join('')+`</div>`
+}
+function timelineRows(rows){
+  return `<div class="tablewrap"><table class="filetable"><tr><th>First Seen</th><th>Last Seen</th><th>IOC</th><th>Malware</th><th>Threat Type</th><th>Confidence</th></tr>${(rows||[]).map(x=>`<tr><td>${esc(x.first_seen||'-')}</td><td>${esc(x.last_seen||'-')}</td><td class="mono">${esc(x.indicator||'-')}</td><td>${esc(x.malware||'Unknown')}</td><td>${esc(x.threat_type||'-')}</td><td>${severityBadge(x.confidence_level)}</td></tr>`).join('')||'<tr><td colspan="6">No ThreatFox timeline data available.</td></tr>'}</table></div>`
+}
+function threatFoxHtml(j){
+  const tf=(j.threat_intel||{}).threatfox||{}; const sum=tf.summary||{}; const rel=tf.relationships||{}; const found=tf.found||[]; const high=sum.highest_confidence||{};
+  const disabled=tf.status==='disabled'?'<div class="small">ThreatFox enrichment is disabled. Set THREATFOX_ENABLED=true to enable it.</div>':'';
+  return `<div class="cards"><div class="card"><div class="k">ThreatFox Status</div><div class="v">${esc(tf.status||'unknown')}</div>${disabled}</div><div class="card"><div class="k">IOCs Queried</div><div class="v">${esc(sum.looked_up||0)}</div></div><div class="card"><div class="k">Matched IOCs</div><div class="v ${sum.found?'err':''}">${esc(sum.found||0)}</div><div class="small">Rows: ${esc(sum.match_count||0)}</div></div><div class="card"><div class="k">Probable C2</div><div class="v ${sum.probable_c2?'err':''}">${esc(sum.probable_c2||0)}</div></div><div class="card"><div class="k">Payload Delivery</div><div class="v ${sum.payload_delivery?'pending':''}">${esc(sum.payload_delivery||0)}</div></div></div>
+  <div class="cards" style="margin-top:12px"><div class="card"><div class="k">Families</div><div class="v">${esc((sum.malware_families||[]).length)}</div><div class="small">${esc((sum.malware_families||[]).join(', ')||'None')}</div></div><div class="card"><div class="k">Threat Types</div><div class="v">${esc((sum.threat_types||[]).length)}</div><div class="small">${esc((sum.threat_types||[]).join(', ')||'None')}</div></div><div class="card"><div class="k">Highest Confidence</div><div class="v">${esc(high.confidence_level??'-')}</div><div class="small">${esc(high.indicator||'No high-confidence match')}</div></div><div class="card"><div class="k">Oldest First Seen</div><div class="v" style="font-size:16px">${esc(sum.oldest_first_seen||'-')}</div></div><div class="card"><div class="k">Newest First Seen</div><div class="v" style="font-size:16px">${esc(sum.newest_first_seen||'-')}</div></div></div>
+  <h3 class="subhead">ThreatFox IOC Context</h3>${threatFoxTable(found)}
+  <h3 class="subhead">ThreatFox Relationships</h3><div class="grid2">${relationshipBlock('By Malware Family', rel.by_family||{})}${relationshipBlock('By Infrastructure Role', rel.by_infrastructure_role||{})}${relationshipBlock('By Threat Type', rel.by_threat_type||{})}</div>
+  <h3 class="subhead">ThreatFox Timeline</h3>${timelineRows(rel.timeline||[])}
+  <h3 class="subhead">Lookup Coverage</h3><div class="tablewrap"><table class="filetable"><tr><th>Indicator</th><th>Type</th><th>Status</th><th>Matches</th><th>Cache</th></tr>${(tf.lookups||[]).map(x=>`<tr><td class="mono">${esc(x.indicator)}</td><td>${esc(x.indicator_type||'-')}</td><td>${esc(x.status||'-')}</td><td>${esc(x.match_count||0)}</td><td>${x.cache_hit?'yes':'no'}</td></tr>`).join('')||'<tr><td colspan="5">No IOC lookups performed.</td></tr>'}</table></div>`
+}
+
+
+function malwareBazaarHtml(j){
+  const mb=(j.threat_intel||{}).malwarebazaar||{}; const sum=mb.summary||{}; const rows=mb.results||[];
+  const fams=(sum.families||[]).join(', ')||'None'; const tags=(sum.tags||[]).slice(0,25).map(t=>`<span class="badge ok">${esc(t)}</span>`).join('')||'<span class="badge">None</span>';
+  const body=rows.map(x=>`<tr><td><div class="file-path">${esc(x.file||x.file_name||'-')}</div><div class="file-sub mono">${esc(shortHash(x.sha256||''))}</div></td><td>${x.found?'<span class="badge bad">known sample</span>':`<span class="badge">${esc(x.status||'unknown')}</span>`}</td><td>${esc(x.family||'Unknown')}</td><td>${esc(x.signature||'-')}</td><td>${esc(x.first_seen||'-')}</td><td>${esc(x.reporter||'-')}</td><td>${(x.tags||[]).slice(0,8).map(t=>`<span class="badge ok">${esc(t)}</span>`).join('')||'-'}</td><td>${x.link?`<a target="_blank" href="${esc(x.link)}">MalwareBazaar</a>`:'-'}</td></tr>`).join('')||'<tr><td colspan="8">No MalwareBazaar lookups performed.</td></tr>';
+  return `<div class="cards"><div class="card"><div class="k">MalwareBazaar Status</div><div class="v">${esc(mb.status||'unknown')}</div></div><div class="card"><div class="k">Hashes Queried</div><div class="v">${esc(sum.looked_up||0)}</div></div><div class="card"><div class="k">Known Samples</div><div class="v ${sum.found?'err':''}">${esc(sum.found||0)}</div></div><div class="card"><div class="k">Families / Signatures</div><div class="v">${esc((sum.families||[]).length)}</div><div class="small">${esc(fams)}</div></div><div class="card"><div class="k">Errors</div><div class="v">${esc(sum.errors||0)}</div></div></div><h3 class="subhead">MalwareBazaar File Matches</h3><div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Status</th><th>Family</th><th>Signature</th><th>First Seen</th><th>Reporter</th><th>Tags</th><th>Link</th></tr>${body}</table></div><h3 class="subhead">Observed MalwareBazaar Tags</h3><div class="status">${tags}</div>`
+}
+
+
+function abuseCHHtml(j){
+  const a=(j.threat_intel||{}).abusech||{}; const m=a.matches||{}; const src=a.sources||{}; const fams=(a.families||[]).join(', ')||'None';
+  return `<div class="cards"><div class="card"><div class="k">AbuseCH Auth</div><div class="v">${a.auth_configured?'configured':'not set'}</div><div class="small">Uses ABUSECH_API_KEY fallback for ThreatFox, MalwareBazaar and URLHaus.</div></div><div class="card"><div class="k">ThreatFox Matches</div><div class="v ${m.threatfox?'err':''}">${esc(m.threatfox||0)}</div><div class="small">status: ${esc(src.threatfox||'-')}</div></div><div class="card"><div class="k">MalwareBazaar Samples</div><div class="v ${m.malwarebazaar?'err':''}">${esc(m.malwarebazaar||0)}</div><div class="small">status: ${esc(src.malwarebazaar||'-')}</div></div><div class="card"><div class="k">URLHaus Matches</div><div class="v ${m.urlhaus?'err':''}">${esc(m.urlhaus||0)}</div><div class="small">status: ${esc(src.urlhaus||'-')}</div></div><div class="card"><div class="k">Feodo / SSLBL</div><div class="v">${esc((m.feodo||0)+(m.sslbl||0))}</div><div class="small">Feodo: ${esc(src.feodo||'-')} · SSLBL: ${esc(src.sslbl||'-')}</div></div></div><h3 class="subhead">Observed Families Across AbuseCH Sources</h3><div class="status">${(a.families||[]).map(f=>`<span class="badge bad">${esc(f)}</span>`).join('')||'<span class="badge">None</span>'}</div><h3 class="subhead">Source Model</h3><pre>RepoTriage\n├── VirusTotal\n├── AbuseCH\n│   ├── ThreatFox\n│   ├── MalwareBazaar\n│   ├── URLHaus\n│   ├── FeodoTracker\n│   └── SSLBL\n└── GitHub</pre>`
+}
+function urlHausHtml(j){
+  const uh=(j.threat_intel||{}).urlhaus||{}; const sum=uh.summary||{}; const rows=uh.results||[];
+  const body=rows.map(x=>`<tr><td><div class="file-path mono">${esc(x.indicator||x.url||x.host||'-')}</div><div class="file-sub">${esc(x.indicator_type||'-')}</div></td><td>${x.found?'<span class="badge bad">found</span>':`<span class="badge">${esc(x.status||'unknown')}</span>`}</td><td>${esc(x.url_status||'-')}</td><td>${esc(x.threat||'-')}</td><td>${esc((x.families||[]).join(', ')||'Unknown')}</td><td>${esc(x.date_added||'-')}</td><td>${esc(x.last_online||'-')}</td><td>${(x.tags||[]).slice(0,8).map(t=>`<span class="badge ok">${esc(t)}</span>`).join('')||'-'}</td><td>${x.link?`<a target="_blank" href="${esc(x.link)}">URLHaus</a>`:'-'}</td></tr>`).join('')||'<tr><td colspan="9">No URLHaus lookups performed.</td></tr>';
+  return `<div class="cards"><div class="card"><div class="k">URLHaus Status</div><div class="v">${esc(uh.status||'unknown')}</div></div><div class="card"><div class="k">Lookups</div><div class="v">${esc(sum.looked_up||0)}</div></div><div class="card"><div class="k">Matches</div><div class="v ${sum.found?'err':''}">${esc(sum.found||0)}</div></div><div class="card"><div class="k">Active URLs</div><div class="v ${sum.active_urls?'err':''}">${esc(sum.active_urls||0)}</div></div><div class="card"><div class="k">Families</div><div class="v">${esc((sum.families||[]).length)}</div><div class="small">${esc((sum.families||[]).join(', ')||'None')}</div></div></div><h3 class="subhead">URLHaus URL / Host Matches</h3><div class="tablewrap"><table class="filetable"><tr><th>Indicator</th><th>Status</th><th>URL Status</th><th>Threat</th><th>Family</th><th>First Seen</th><th>Last Online</th><th>Tags</th><th>Link</th></tr>${body}</table></div>`
+}
+function feodoHtml(j){
+  const f=(j.threat_intel||{}).feodo||{}; const sum=f.summary||{}; const body=(f.matches||[]).map(x=>`<tr><td class="mono">${esc(x.ip)}</td><td>${esc(x.malware||'-')}</td><td>${esc(x.status||'-')}</td><td>${esc(x.first_seen||'-')}</td><td>${esc(x.last_online||'-')}</td><td>${esc(x.source||'FeodoTracker')}</td></tr>`).join('')||'<tr><td colspan="6">No FeodoTracker C2 matches for extracted IPs.</td></tr>';
+  return `<div class="cards"><div class="card"><div class="k">Feodo Status</div><div class="v">${esc(f.status||'unknown')}</div></div><div class="card"><div class="k">IPs Checked</div><div class="v">${esc(sum.looked_up||0)}</div></div><div class="card"><div class="k">C2 Matches</div><div class="v ${sum.matches?'err':''}">${esc(sum.matches||0)}</div></div><div class="card"><div class="k">Feed Rows</div><div class="v">${esc(sum.feed_rows||0)}</div></div></div><h3 class="subhead">FeodoTracker Botnet C2 Matches</h3><div class="tablewrap"><table class="filetable"><tr><th>IP</th><th>Malware</th><th>Status</th><th>First Seen</th><th>Last Online</th><th>Source</th></tr>${body}</table></div>`
+}
+function sslblHtml(j){
+  const s=(j.threat_intel||{}).sslbl||{}; const sum=s.summary||{}; const body=(s.matches||[]).map(x=>`<tr><td class="mono">${esc(x.ip)}</td><td>${esc(x.port||'-')}</td><td class="mono">${esc(x.ja3||'-')}</td><td>${esc(x.listing_date||'-')}</td><td>${esc(x.source||'SSLBL')}</td></tr>`).join('')||'<tr><td colspan="5">No SSLBL IP/JA3 matches for extracted IPs.</td></tr>';
+  return `<div class="cards"><div class="card"><div class="k">SSLBL Status</div><div class="v">${esc(s.status||'unknown')}</div></div><div class="card"><div class="k">IPs Checked</div><div class="v">${esc(sum.looked_up||0)}</div></div><div class="card"><div class="k">SSLBL Matches</div><div class="v ${sum.matches?'err':''}">${esc(sum.matches||0)}</div></div><div class="card"><div class="k">Feed Rows</div><div class="v">${esc(sum.feed_rows||0)}</div></div></div><h3 class="subhead">SSLBL Malicious SSL / JA3 Infrastructure Matches</h3><div class="tablewrap"><table class="filetable"><tr><th>IP</th><th>Port</th><th>JA3</th><th>Listing Date</th><th>Source</th></tr>${body}</table></div>`
+}
+
+
+function mitreHtml(j){
+  const m=j.mitre||{}; const sum=m.summary||{}; const rows=m.techniques||[]; const by=m.by_tactic||{};
+  const cardHtml=`<div class="cards"><div class="card"><div class="k">Techniques</div><div class="v">${esc(sum.count||0)}</div></div><div class="card"><div class="k">Tactics</div><div class="v">${esc(sum.tactics||0)}</div></div><div class="card"><div class="k">High Confidence</div><div class="v ${sum.high_confidence?'err':''}">${esc(sum.high_confidence||0)}</div></div><div class="card"><div class="k">Medium Confidence</div><div class="v">${esc(sum.medium_confidence||0)}</div></div><div class="card"><div class="k">Low Confidence</div><div class="v">${esc(sum.low_confidence||0)}</div></div></div>`;
+  const tacticOrder=['Initial Access','Execution','Defense Evasion','Credential Access','Collection','Command and Control','Exfiltration','Resource Development'];
+  const grouped=tacticOrder.filter(t=>by[t]).map(t=>`<div class="group"><div class="group-head"><div><div class="group-title">${esc(t)}</div><div class="group-meta">${esc((by[t]||[]).length)} technique(s)</div></div></div><div class="tablewrap"><table class="filetable"><tr><th>Technique</th><th>Name</th><th>Confidence</th><th>Evidence</th><th>Sources</th></tr>${(by[t]||[]).map(x=>`<tr><td class="mono"><b>${esc(x.id)}</b></td><td>${esc(x.name)}<div class="file-sub">${esc(x.reason||'')}</div></td><td><span class="badge ${x.confidence==='High'?'bad':(x.confidence==='Medium'?'warn':'')}">${esc(x.confidence||'Medium')}</span></td><td>${(x.evidence||[]).slice(0,5).map(e=>`<div class="mono">${esc(e)}</div>`).join('')||'-'}</td><td>${(x.sources||[]).map(src=>`<span class="badge ok">${esc(src)}</span>`).join('')}</td></tr>`).join('')}</table></div></div>`).join('');
+  const allRows=rows.map(x=>`<tr><td class="mono"><b>${esc(x.id)}</b></td><td>${esc(x.tactic)}</td><td>${esc(x.name)}</td><td><span class="badge ${x.confidence==='High'?'bad':(x.confidence==='Medium'?'warn':'')}">${esc(x.confidence||'Medium')}</span></td><td>${(x.sources||[]).join(', ')}</td></tr>`).join('')||'<tr><td colspan="5">No MITRE mapping generated from current evidence.</td></tr>';
+  return `${cardHtml}<h3 class="subhead">Mapped ATT&CK Techniques by Tactic</h3>${grouped||'<div class="info-box">No MITRE mapping generated from current evidence.</div>'}<h3 class="subhead">Technique Index</h3><div class="tablewrap"><table class="filetable"><tr><th>ID</th><th>Tactic</th><th>Technique</th><th>Confidence</th><th>Sources</th></tr>${allRows}</table></div>`;
+}
+
+
+function attackNarrativeHtml(j){
+  const n=j.attack_narrative||{};
+  const mal=n.malicious_files||[];
+  const infra=n.infrastructure_highlights||[];
+  const mitre=n.mitre_highlights||[];
+  const actions=n.recommended_actions||[];
+  const bullets=n.narrative_bullets||[];
+  return `<div class="cards"><div class="card"><div class="k">Overall Risk</div><div class="v ${n.risk==='Critical'||n.risk==='High'?'err':(n.risk==='Medium'?'pending':'ok')}">${esc(n.risk||'Unknown')}</div></div><div class="card"><div class="k">Family / Signature</div><div class="v">${esc(n.family||'Unknown')}</div></div><div class="card"><div class="k">Malicious Files</div><div class="v ${mal.length?'err':''}">${esc(mal.length)}</div></div><div class="card"><div class="k">Infra Highlights</div><div class="v">${esc(infra.length)}</div></div><div class="card"><div class="k">MITRE Highlights</div><div class="v">${esc(mitre.length)}</div></div></div>
+  <h3 class="subhead">Analyst Narrative</h3><div class="info-box">${bullets.map(b=>`<p>${esc(b)}</p>`).join('')||'<p>No narrative generated.</p>'}</div>
+  <h3 class="subhead">Likely Objective</h3><div class="status">${(n.likely_objectives||[]).map(x=>`<span class="badge bad">${esc(x)}</span>`).join('')||'<span class="badge">Unknown</span>'}</div>
+  <h3 class="subhead">Malicious Files</h3><div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>SHA256</th><th>VT</th></tr>${mal.map(f=>`<tr><td>${esc(f.name||'-')}</td><td>${esc(f.type||'-')}</td><td class="mono">${esc(f.sha256||'-')}</td><td>${f.vt_link?`<a target="_blank" href="${esc(f.vt_link)}">VT Report</a>`:'-'}</td></tr>`).join('')||'<tr><td colspan="4">No malicious files in current result.</td></tr>'}</table></div>
+  <h3 class="subhead">Infrastructure Highlights</h3><div class="tablewrap"><table class="filetable"><tr><th>Indicator</th><th>Role</th><th>Confidence</th><th>Source</th><th>Malware / Detail</th></tr>${infra.map(x=>`<tr><td class="mono">${esc(x.indicator||'-')}</td><td>${roleBadge(x.role||'-')}</td><td>${esc(x.confidence||'-')}</td><td>${esc(x.source||'-')}</td><td>${esc(Array.isArray(x.malware)?x.malware.join(', '):(x.malware||'-'))}</td></tr>`).join('')||'<tr><td colspan="5">No enriched infrastructure highlights.</td></tr>'}</table></div>
+  <h3 class="subhead">MITRE Highlights</h3><div class="tablewrap"><table class="filetable"><tr><th>ID</th><th>Tactic</th><th>Technique</th><th>Confidence</th><th>Sources</th></tr>${mitre.map(m=>`<tr><td class="mono"><b>${esc(m.id||'-')}</b></td><td>${esc(m.tactic||'-')}</td><td>${esc(m.name||'-')}</td><td>${esc(m.confidence||'-')}</td><td>${esc((m.sources||[]).join(', '))}</td></tr>`).join('')||'<tr><td colspan="5">No MITRE highlights.</td></tr>'}</table></div>
+  <h3 class="subhead">Recommended Analyst Actions</h3><ul>${actions.map(a=>`<li>${esc(a)}</li>`).join('')||'<li>Continue manual review.</li>'}</ul>
+  <h3 class="subhead">Copy-ready Markdown</h3><button onclick="navigator.clipboard.writeText(document.getElementById('attackMd').innerText)">Copy Narrative</button><pre id="attackMd">${esc(n.markdown||'')}</pre>`
+}
+
+
+function ctiSummaryHtml(j){
+  const c=j.cti_dashboard||{}; const fams=c.families||[];
+  return `<div class="cards"><div class="card"><div class="k">Primary Family</div><div class="v">${esc(c.primary_family||'Unknown')}</div></div><div class="card"><div class="k">Risk</div><div class="v ${c.risk==='Critical'||c.risk==='High'?'err':(c.risk==='Medium'?'pending':'ok')}">${esc(c.risk||'Unknown')}</div></div><div class="card"><div class="k">IOC Count</div><div class="v">${esc(c.ioc_count||0)}</div></div><div class="card"><div class="k">MITRE</div><div class="v">${esc(c.mitre_count||0)}</div></div><div class="card"><div class="k">Infra Items</div><div class="v">${esc(c.infrastructure_count||0)}</div></div></div>
+  <h3 class="subhead">Source Coverage</h3><div class="cards"><div class="card"><div class="k">ThreatFox</div><div class="v">${esc(c.threatfox_matches||0)}</div></div><div class="card"><div class="k">MalwareBazaar</div><div class="v">${esc(c.malwarebazaar_matches||0)}</div></div><div class="card"><div class="k">URLHaus</div><div class="v">${esc(c.urlhaus_matches||0)}</div></div><div class="card"><div class="k">Feodo</div><div class="v">${esc(c.feodo_matches||0)}</div></div><div class="card"><div class="k">SSLBL</div><div class="v">${esc(c.sslbl_matches||0)}</div></div></div>
+  <h3 class="subhead">Observed Families / Signatures</h3><div class="tablewrap"><table class="filetable"><tr><th>Family</th><th>Evidence Count</th><th>Sources</th></tr>${fams.map(f=>`<tr><td><b>${esc(f.name)}</b></td><td>${esc(f.count)}</td><td>${(f.sources||[]).map(x=>`<span class="badge ok">${esc(x)}</span>`).join('')}</td></tr>`).join('')||'<tr><td colspan="3">No family attribution yet.</td></tr>'}</table></div>`
+}
+function graphColor(type, sev){
+  if(type==='sample') return '#42e8b4';
+  if(type==='file') return sev==='critical'?'#ff6262':'#5cb7ff';
+  if(type==='family') return '#ffd166';
+  if(type==='infrastructure') return '#ff8a65';
+  if(type==='url') return '#c792ea';
+  if(type==='domain') return '#82d4ff';
+  if(type==='ip') return '#ffb86c';
+  return '#8da6b3';
+}
+function compactLabel(s,n=24){s=String(s||''); return s.length>n?s.slice(0,n-1)+'…':s}
+function buildGraphLayout(nodes, edges){
+  const w=1200,h=620,cx=w/2,cy=h/2; const arranged=[]; const byType={};
+  nodes.forEach(n=>(byType[n.type] ||= []).push(n));
+  const sample=(byType.sample||[])[0]||nodes[0]; if(sample) arranged.push({...sample,x:cx,y:cy,r:34});
+  const rings=[
+    ['file',170],['family',250],['domain',330],['url',390],['ip',440],['infrastructure',500],['ioc',460]
+  ];
+  rings.forEach(([typ,rad],ri)=>{const arr=(byType[typ]||[]).slice(0,18); const step=(Math.PI*2)/(arr.length||1); arr.forEach((n,i)=>{const ang=step*i-(Math.PI/2)+(ri*.22); arranged.push({...n,x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad,r:typ==='family'?26:22});});});
+  const map={}; arranged.forEach(n=>map[n.id]=n); return {nodes:arranged,edges,map,w,h};
+}
+function infraGraphHtml(j){
+  const g=j.infrastructure_graph||{nodes:[],edges:[]}; const nodes=g.nodes||[], edges=g.edges||[]; const layout=buildGraphLayout(nodes,edges); const edgeSvg=edges.slice(0,280).map(e=>{const a=layout.map[e.from],b=layout.map[e.to]; if(!a||!b)return ''; const mx=(a.x+b.x)/2,my=(a.y+b.y)/2; return `<line class="g-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line><text class="g-edge-label" x="${mx}" y="${my}">${esc(compactLabel(e.label,18))}</text>`}).join('');
+  const nodeSvg=layout.nodes.map(n=>{const col=graphColor(n.type,n.severity); const subtitle=n.type==='file'?(n.meta?.verdict||'file'):(n.type==='family'?'family':n.type); const safeId=String(n.id).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); return `<g class="g-node" onclick="showGraphNode('${safeId}')"><circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${col}22" stroke="${col}"></circle><text class="g-label" text-anchor="middle" x="${n.x}" y="${n.y-2}">${esc(compactLabel(n.label,22))}</text><text class="g-sub" text-anchor="middle" x="${n.x}" y="${n.y+15}">${esc(compactLabel(subtitle,18))}</text></g>`}).join('');
+  window.__graphNodes={}; nodes.forEach(n=>window.__graphNodes[n.id]=n);
+  return `<div class="cards"><div class="card"><div class="k">Nodes</div><div class="v">${esc(g.summary?.nodes||nodes.length)}</div></div><div class="card"><div class="k">Relationships</div><div class="v">${esc(g.summary?.edges||edges.length)}</div></div><div class="card"><div class="k">Families</div><div class="v">${esc((g.summary?.by_type||{}).family||0)}</div></div><div class="card"><div class="k">Files</div><div class="v">${esc((g.summary?.by_type||{}).file||0)}</div></div><div class="card"><div class="k">Infrastructure</div><div class="v">${esc((g.summary?.by_type||{}).infrastructure||0)}</div></div></div>
+  <div class="graph-note">This graph is designed for quick interpretation: the root GitHub sample is centered, extracted files, malware families, IOCs, and enriched infrastructure are arranged around it. Click any node to inspect details.</div>
+  <div class="legend"><span><i class="dot" style="background:#42e8b4"></i>Sample</span><span><i class="dot" style="background:#ff6262"></i>Malicious file</span><span><i class="dot" style="background:#ffd166"></i>Family</span><span><i class="dot" style="background:#82d4ff"></i>Domain</span><span><i class="dot" style="background:#c792ea"></i>URL</span><span><i class="dot" style="background:#ff8a65"></i>Enriched infrastructure</span></div>
+  <div class="graphcanvas"><svg class="graphsvg" viewBox="0 0 ${layout.w} ${layout.h}" preserveAspectRatio="xMidYMid meet">${edgeSvg}${nodeSvg}</svg></div><div id="graphDetail" class="detailpane">Click a node to view details.</div>
+  <h3 class="subhead">Relationship Edges</h3><div class="tablewrap"><table class="filetable"><tr><th>From</th><th>Relationship</th><th>To</th><th>Source</th></tr>${edges.slice(0,400).map(e=>`<tr><td class="mono">${esc(e.from)}</td><td>${esc(e.label)}</td><td class="mono">${esc(e.to)}</td><td>${esc(e.source||'-')}</td></tr>`).join('')||'<tr><td colspan="4">No graph relationships built.</td></tr>'}</table></div>`
+}
+function showGraphNode(id){
+  const n=(window.__graphNodes||{})[id]; if(!n)return; const meta=n.meta||{}; document.getElementById('graphDetail').innerHTML=`<b>${esc(n.label)}</b><div class="small">Type: ${esc(n.type)} · Severity: ${esc(n.severity||'neutral')}</div><pre>${esc(JSON.stringify(meta,null,2))}</pre>`;
+}
+
+function campaignHtml(j){
+  const c=j.campaign_analysis||{}; const ev=c.evidence||[]; const del=c.delivery_mechanisms||[]; const tl=c.timeline||[];
+  return `<div class="cards"><div class="card"><div class="k">Campaign Assessment</div><div class="v">${esc(c.candidate||'Unknown')}</div></div><div class="card"><div class="k">Confidence</div><div class="v ${c.confidence_score>=61?'ok':(c.confidence_score>=31?'pending':'err')}">${esc(c.confidence_band||'Low')}</div><div class="small">${esc(c.confidence_score||0)}%</div></div><div class="card"><div class="k">Evidence Signals</div><div class="v">${ev.length}</div></div><div class="card"><div class="k">Delivery Clues</div><div class="v">${del.length}</div></div><div class="card"><div class="k">Timeline Items</div><div class="v">${tl.length}</div></div></div>
+  <div class="info-box small">${esc(c.disclaimer||'Campaign correlation is conservative and evidence-based.')}</div>
+  <h3 class="subhead">Evidence</h3><div class="tablewrap"><table class="filetable"><tr><th>Signal</th><th>Detail</th><th>Weight</th><th>Source</th></tr>${ev.map(e=>`<tr><td>${esc(e.signal)}</td><td>${esc(e.detail)}</td><td>${esc(e.weight)}</td><td>${esc(e.source)}</td></tr>`).join('')||'<tr><td colspan="4">No campaign evidence.</td></tr>'}</table></div>
+  <h3 class="subhead">Delivery Mechanisms</h3><div class="tablewrap"><table class="filetable"><tr><th>Mechanism</th><th>Count</th></tr>${del.map(x=>`<tr><td>${esc(x.mechanism)}</td><td>${esc(x.count)}</td></tr>`).join('')||'<tr><td colspan="2">No delivery clues.</td></tr>'}</table></div>
+  <h3 class="subhead">Timeline</h3><div class="tablewrap"><table class="filetable"><tr><th>Time</th><th>Event</th><th>Detail</th></tr>${tl.map(x=>`<tr><td>${esc(x.time)}</td><td>${esc(x.event)}</td><td>${esc(x.detail)}</td></tr>`).join('')||'<tr><td colspan="3">No external timeline from current sources.</td></tr>'}</table></div>`
+}
+function actorHtml(j){
+  const a=j.threat_actor_assessment||{}; const ev=a.evidence||[]; const assoc=a.potential_associations||[];
+  return `<div class="cards"><div class="card"><div class="k">Assessment</div><div class="v">${esc(a.primary_assessment||'Unknown')}</div></div><div class="card"><div class="k">Known Attribution</div><div class="v">${esc(a.known_attribution||'None')}</div></div><div class="card"><div class="k">Confidence</div><div class="v ${a.confidence_score>=61?'ok':(a.confidence_score>=31?'pending':'err')}">${esc(a.confidence_band||'Low')}</div><div class="small">${esc(a.confidence_score||0)}%</div></div><div class="card"><div class="k">Potential Associations</div><div class="v">${assoc.length}</div></div><div class="card"><div class="k">Evidence Items</div><div class="v">${ev.length}</div></div></div>
+  <div class="info-box"><b>Analyst Note</b><div class="small">${esc(a.analyst_note||'No defensible attribution available.')}</div><div class="small">${esc(a.disclaimer||'Actor attribution requires explicit source evidence.')}</div></div>
+  <h3 class="subhead">Evidence</h3><div class="tablewrap"><table class="filetable"><tr><th>Signal</th><th>Detail</th><th>Weight</th><th>Source</th></tr>${ev.map(e=>`<tr><td>${esc(e.signal)}</td><td>${esc(e.detail)}</td><td>${esc(e.weight)}</td><td>${esc(e.source)}</td></tr>`).join('')||'<tr><td colspan="4">No actor evidence.</td></tr>'}</table></div>
+  <h3 class="subhead">Potential Associations</h3><div class="tablewrap"><table class="filetable"><tr><th>Actor / Reference</th><th>Source</th><th>Evidence</th></tr>${assoc.map(x=>`<tr><td>${esc(x.actor)}</td><td>${esc(x.source)}</td><td>${esc(x.evidence)}</td></tr>`).join('')||'<tr><td colspan="3">None. Unknown is preferred over unsupported attribution.</td></tr>'}</table></div>`
+}
+function correlationMatrixHtml(j){
+  const m=j.correlation_matrix||{}; const rows=m.rows||[];
+  return `<div class="cards"><div class="card"><div class="k">Correlation Rows</div><div class="v">${esc(m.summary?.count||rows.length)}</div></div><div class="card"><div class="k">Campaign</div><div class="v">${esc(j.campaign_analysis?.candidate||'Unknown')}</div></div><div class="card"><div class="k">Actor</div><div class="v">${esc(j.threat_actor_assessment?.primary_assessment||'Unknown')}</div></div><div class="card"><div class="k">Family</div><div class="v">${esc(j.cti_dashboard?.primary_family||'Unknown')}</div></div></div>
+  <h3 class="subhead">Evidence Correlation Matrix</h3><div class="tablewrap"><table class="filetable"><tr><th>Entity</th><th>Relationship</th><th>Related To</th><th>Confidence</th><th>Evidence</th></tr>${rows.map(r=>`<tr><td>${esc(r.entity)}</td><td>${esc(r.relationship)}</td><td>${esc(r.related_to)}</td><td>${esc(r.confidence)}</td><td>${esc(r.evidence)}</td></tr>`).join('')||'<tr><td colspan="5">No correlation rows generated.</td></tr>'}</table></div>`
+}
+
+function relatedSamplesHtml(j){
+  const r=j.related_samples||{}; const rows=r.related_samples||[];
+  return `<div class="cards"><div class="card"><div class="k">Related Samples</div><div class="v">${esc(r.count||0)}</div></div><div class="card"><div class="k">Families</div><div class="v">${esc((r.families||[]).length)}</div></div><div class="card"><div class="k">Shared Domains</div><div class="v">${esc((r.shared_domains||[]).length)}</div></div><div class="card"><div class="k">Shared URLs</div><div class="v">${esc((r.shared_urls||[]).length)}</div></div></div><div class="info-box small">${esc(r.note||'')}</div><h3 class="subhead">Known / Related Samples</h3><div class="tablewrap"><table class="filetable"><tr><th>File</th><th>SHA256</th><th>Family</th><th>Source</th><th>Reason</th><th>Link</th></tr>${rows.map(x=>`<tr><td>${esc(x.file||'-')}</td><td class="mono">${esc(x.sha256||'-')}</td><td>${esc(x.family||'Unknown')}</td><td>${esc(x.source||'-')}</td><td>${esc(x.reason||'-')}</td><td>${x.link?`<a target="_blank" href="${esc(x.link)}">Open</a>`:'-'}</td></tr>`).join('')||'<tr><td colspan="6">No exact related samples found from current sources.</td></tr>'}</table></div><h3 class="subhead">Shared Indicators</h3><div class="grid2">${listBlock('Families', r.families||[])}${listBlock('Shared Domains', r.shared_domains||[])}${listBlock('Shared URLs', r.shared_urls||[])}</div>`
+}
+function downloadBlob(name, content, type='application/json'){
+  const blob=new Blob([content],{type}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(url),800);
+}
+function exportsHtml(j){
+  return `<div class="info-box"><b>Export Current Analysis</b><div class="small">Exports are generated from the current browser result. If this job was persisted, backend export endpoints are also available via the job ID.</div></div><div class="btnrow"><button onclick="downloadBlob('repotriage-result.json', JSON.stringify(current,null,2))">Export JSON</button><button onclick="downloadBlob('repotriage-iocs.csv', makeCsv(current),'text/csv')">Export CSV</button><button onclick="downloadBlob('repotriage-stix.json', JSON.stringify(current?.exports_stix||{},null,2))">Export STIX</button><button onclick="downloadBlob('repotriage-misp.json', JSON.stringify(current?.exports_misp||{},null,2))">Export MISP</button><button onclick="downloadBlob('repotriage-report.html', current?.analyst_report?.html||'', 'text/html')">Export HTML Report</button></div><h3 class="subhead">Available Backend Exports</h3><pre>${esc(currentJobId?`/api/jobs/${currentJobId}/export/json\n/api/jobs/${currentJobId}/export/csv\n/api/jobs/${currentJobId}/export/stix\n/api/jobs/${currentJobId}/export/misp\n/api/jobs/${currentJobId}/report/html`:'Run an analysis job first.')}</pre>`
+}
+function makeCsv(j){
+  const rows=[['type','value','source','detail']];
+  (j.files||[]).forEach(f=>rows.push(['file',displayName(f),'RepoTriage',f.sha256||'']));
+  const i=j.iocs||{}; Object.entries(i).forEach(([k,v])=>{if(Array.isArray(v)&&k!=='ioc_details')v.forEach(x=>rows.push(['ioc:'+k,x,'extraction','']))});
+  (j.mitre?.techniques||[]).forEach(t=>rows.push(['mitre',t.id,(t.sources||[]).join('|'),t.name||'']));
+  return rows.map(r=>r.map(x=>'"'+String(x??'').replaceAll('"','""')+'"').join(',')).join('\n');
+}
+function analystReportHtml(j){
+  const r=j.analyst_report||{};
+  return `<div class="btnrow"><button onclick="navigator.clipboard.writeText(document.getElementById('reportMd').innerText)">Copy Markdown</button><button onclick="downloadBlob('repotriage-analyst-report.md', document.getElementById('reportMd').innerText, 'text/markdown')">Download Markdown</button><button onclick="downloadBlob('repotriage-analyst-report.html', current?.analyst_report?.html||'', 'text/html')">Download HTML</button></div><pre id="reportMd">${esc(r.markdown||'No report generated.')}</pre>`
+}
+function vtSummaryCard(v, title){return `<div class="card"><div class="k">${esc(title)}</div><div class="v ${verdictClass(v?.verdict)}">${esc(v?.verdict||'unknown')}</div><div class="small">${esc(v?.detections_summary||'-')} ${v?.cache_hit?'· cache':''}</div>${v?.permalink?`<div class="small"><a target="_blank" href="${esc(v.permalink)}">Open VT Report</a></div>`:''}</div>`}
+function vtDetectionsTable(v){const detections=(v?.top_detections||[]).map(d=>`<tr><td>${esc(d.engine)}</td><td>${esc(d.category)}</td><td>${esc(d.result)}</td></tr>`).join('')||'<tr><td colspan="3">No named detections available.</td></tr>';return `<div class="tablewrap"><table class="filetable"><tr><th>Engine</th><th>Category</th><th>Result</th></tr>${detections}</table></div>`}
+function vtHtml(j){const v=j.vt||{};const rows=(j.files||[]).map(x=>`<tr><td><div class="file-path">${esc(displayName(x))}</div></td><td>${vtBadge(x.vt_verdict)}</td><td>${esc((x.vt_malicious??0)+' / '+(x.vt_suspicious??0))}</td><td>${x.vt_link?`<a target="_blank" href="${esc(x.vt_link)}">VT Report</a>`:'-'}</td></tr>`).join('');const tags=(v.tags||[]).map(n=>`<span class="badge ok">${esc(n)}</span>`).join('')||'<span class="badge">None</span>';const names=(v.names||[]).map(n=>`<li>${esc(n)}</li>`).join('')||'<li>None</li>';return `<div class="cards">${vtSummaryCard(v,'Root File Verdict')}<div class="card"><div class="k">Detections</div><div class="v">${esc(v.detections_summary||'-')}</div></div><div class="card"><div class="k">Family / Label</div><div class="v">${esc(v.family?.name||'Unknown')}</div><div class="small">Confidence ${esc(v.family?.confidence||0)}%</div></div><div class="card"><div class="k">Reputation</div><div class="v">${esc(v.reputation ?? '-')}</div></div><div class="card"><div class="k">VT Status</div><div class="v">${esc(v.status||'unknown')}</div></div></div><h3 class="subhead">All File VT Verdicts</h3><div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Verdict</th><th>Malicious / Suspicious</th><th>Report</th></tr>${rows}</table></div><h3 class="subhead">Root File Top Detections</h3>${vtDetectionsTable(v)}<h3 class="subhead">Root File Tags</h3><div class="status">${tags}</div><h3 class="subhead">Root File Names</h3><ul>${names}</ul>`}
+function tabHtml(t,j){const f=j.root_file||{}, s=j.source||{}; if(t==='Overview')return `<div class="root-card"><div class="info-box"><div class="info-label">Source URL</div><div class="info-value"><a href="${esc(s.display_url)}" target="_blank">${esc(s.display_url)}</a></div></div><div class="info-box"><div class="info-label">Owner / Repo</div><div class="info-value">${esc(s.owner)}/${esc(s.repo)}</div></div><div class="info-box"><div class="info-label">Root File</div><div class="info-value">${esc(f.filename)}</div></div><div class="info-box"><div class="info-label">Root VT</div><div class="info-value">${vtBadge(j.vt?.verdict)}</div></div></div><h3 class="subhead">Hashes</h3><div class="tablewrap"><table class="filetable"><tr><th>MD5</th><th>SHA1</th><th>SHA256</th></tr><tr><td class="mono">${esc(f.md5)}</td><td class="mono">${esc(f.sha1)}</td><td class="mono">${esc(f.sha256)}</td></tr></table></div><h3 class="subhead">Public Analysis Safety</h3><div class="grid2"><div class="info-box"><div class="info-label">Sample Handling</div><div class="info-value">Server-side only</div><div class="small">The browser receives only metadata, hashes, IOCs, CTI enrichment and reports.</div></div><div class="info-box"><div class="info-label">Mode</div><div class="info-value">${esc(j.safety?.analysis_mode||'local_dev')}</div><div class="small">Production should run this behind an isolated Linux worker/container.</div></div></div><h3 class="subhead">Extraction Summary</h3><div class="cards"><div class="card"><div class="k">Total Listed</div><div class="v">${esc(j.file_stats?.total_listed||1)}</div></div><div class="card"><div class="k">Extracted Children</div><div class="v">${esc(j.file_stats?.extracted_children||0)}</div></div><div class="card"><div class="k">Malicious</div><div class="v ${j.file_stats?.malicious?'err':''}">${esc(j.file_stats?.malicious||0)}</div></div><div class="card"><div class="k">Suspicious</div><div class="v ${j.file_stats?.suspicious?'pending':''}">${esc(j.file_stats?.suspicious||0)}</div></div><div class="card"><div class="k">Errors</div><div class="v">${esc(j.file_stats?.errors||0)}</div></div><div class="card"><div class="k">IOCs</div><div class="v">${esc(j.file_stats?.iocs||0)}</div></div></div>`;
+if(t==='Files')return groupedFilesHtml(j);
+if(t==='CTI Summary')return ctiSummaryHtml(j);
+if(t==='Campaign Analysis')return campaignHtml(j);
+if(t==='Threat Actor')return actorHtml(j);
+if(t==='Correlation Matrix')return correlationMatrixHtml(j);
+if(t==='Infrastructure Graph')return infraGraphHtml(j);
+if(t==='Related Samples')return relatedSamplesHtml(j);
+if(t==='Exports')return exportsHtml(j);
+if(t==='Analyst Report')return analystReportHtml(j);
+if(t==='VirusTotal')return vtHtml(j);
+if(t==='AbuseCH')return abuseCHHtml(j);
+if(t==='ThreatFox')return threatFoxHtml(j);
+if(t==='MalwareBazaar')return malwareBazaarHtml(j);
+if(t==='URLHaus')return urlHausHtml(j);
+if(t==='Feodo')return feodoHtml(j);
+if(t==='SSLBL')return sslblHtml(j);
+if(t==='Infrastructure')return infraHtml(j);
+if(t==='MITRE ATT&CK')return mitreHtml(j);
+if(t==='Attack Narrative')return attackNarrativeHtml(j);
+if(t==='Executive Summary')return `<pre>${esc(j.summary)}</pre>`;
+return `<pre>${esc(JSON.stringify(j,null,2))}</pre>`}
+</script>
+</body></html>
