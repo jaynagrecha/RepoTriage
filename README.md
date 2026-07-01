@@ -1,8 +1,52 @@
-# RepoTriage v2.0
+# RepoTriage v2.2B.1
 
 GitHub Payload Intelligence Platform — public job-based GitHub file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping and result-only browser output.
 
-## v2.0 Highlights
+## Changelog
+
+### v2.2B.1 — Security, reliability, and UX hardening
+
+**Security**
+- `POST /api/analyze` is disabled by default (`ALLOW_SYNC_ANALYZE=false`). The supported public path remains `POST /api/jobs`.
+- `TRUST_PROXY=false` by default; enable only when running behind a trusted reverse proxy.
+- Rate-limit counters use file locking to reduce concurrent write races.
+- GitHub downloads validate the final redirect host stays on GitHub / `*.githubusercontent.com`.
+- API responses no longer expose `local_path`, `extract_dir`, or `client_ip`.
+
+**Reliability**
+- Archive extraction enforces decompressed byte limits during read (zip/tar/rar bomb mitigation).
+- Quarantine files are removed after each analysis unless `KEEP_QUARANTINE=true`.
+- Child VirusTotal lookups run in parallel (`VT_CONCURRENT_LIMIT=5`).
+- Persisted jobs reload into memory; active-job counting scans disk after restarts.
+
+**Correctness**
+- Fixed narrative risk scoring for Abuse.ch match counts.
+- Refreshed Executive Summary text (removed stale “upcoming versions” wording).
+- Fixed `children_vt_lookup` pipeline flag.
+- STIX file IDs use stable UUID-like hashes instead of truncated SHA256.
+
+**UI**
+- Tabs grouped into Summary / CTI Fusion / Intel Sources / Reporting.
+- Usage quota bar via `/api/usage`.
+- Readable rate-limit (429) error messages.
+- Analyze button disabled while running; polling timeout extended to ~8 minutes.
+- Full hash values available via hover tooltips; safer infrastructure graph node clicks.
+
+**New environment variables**
+
+```env
+TRUST_PROXY=false
+ALLOW_SYNC_ANALYZE=false
+KEEP_QUARANTINE=false
+VT_CONCURRENT_LIMIT=5
+```
+
+**Deployment notes**
+- Production behind nginx/Cloudflare: set `TRUST_PROXY=true`.
+- Lab debugging with on-disk samples: set `KEEP_QUARANTINE=true`.
+- Legacy direct callers of `/api/analyze`: set `ALLOW_SYNC_ANALYZE=true` (not recommended for public hosts).
+
+---
 
 - Public worker-style analysis flow
 - Browser submits only GitHub file URLs; sample bytes are never returned to the browser
@@ -192,6 +236,12 @@ MAX_INPUT_URL_LENGTH=2048
 Only `/api/jobs` consumes quota. Polling job status and exporting completed results do not consume additional quota.
 
 For trusted internal testing you can set `ADMIN_BYPASS_TOKEN` and send it as the `x-admin-bypass-token` header.
+
+When deployed behind a reverse proxy, also set:
+
+```env
+TRUST_PROXY=true
+```
 
 ## Cloudflare R2 / Persistent Storage
 
