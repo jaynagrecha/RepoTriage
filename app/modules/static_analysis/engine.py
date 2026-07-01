@@ -16,6 +16,7 @@ from .text_analyzer import analyze_text
 from .types import FileProfile, classify_file, _content_looks_like_script, _extension_from_name
 from .universal import analyze_universal
 from .verdict import build_verdict
+from .indicators import build_extracted_indicators
 from .narrative import build_analyst_narrative
 from .versioning import STATIC_ANALYSIS_VERSION
 
@@ -143,6 +144,7 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
         'functions': functions,
     }
     report['correlation'] = _correlate(report)
+    report['extracted_indicators'] = build_extracted_indicators(report)
     report['static_verdict'] = build_verdict(report)
     report['analyst_narrative'] = build_analyst_narrative(report, vt_verdict=vt_verdict)
     if vt_verdict:

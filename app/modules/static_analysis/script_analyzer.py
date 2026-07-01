@@ -114,6 +114,7 @@ def analyze_script(path: Path) -> dict[str, Any]:
         logic_summary.append('Targets Windows Script Host via ActiveXObject/WScript — often used in document-themed droppers')
     if 'fromCharCode' in text or 'charCodeAt' in text:
         logic_summary.append('Builds strings dynamically to evade static scanners')
+    embedded_urls = re.findall(r'(?i)https?://[^\s\'\"<>\)\]\}]+', text)
     return {
         'language': language,
         'line_count': line_count,
@@ -121,6 +122,7 @@ def analyze_script(path: Path) -> dict[str, Any]:
         'pattern_matches': matches[:60],
         'functions': functions,
         'logic_summary': logic_summary,
+        'links': list(dict.fromkeys(embedded_urls))[:40],
     }
 
 

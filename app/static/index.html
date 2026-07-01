@@ -97,7 +97,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3.2 Clear</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3.3 IOCs</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -186,16 +186,29 @@ function staticFilesTable(files){
  return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>VT</th><th>Static Result</th><th>Action</th></tr>${(files||[]).map(f=>{
    const stale=f.stale?'<span class="badge warn">outdated</span> ':'';
    const label=f.static_verdict_label||f.static_verdict||'not run';
-   return `<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub">${esc(f.file_type||'-')} · ${esc(shortHash(f.sha256))}</div></td><td>${vtBadge(f.vt_verdict)}</td><td>${stale}${staticVerdictLabel(f.static_verdict, label)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}<div class="file-sub">${esc(f.static_status||'not_started')}</div></td><td>${f.cached?`<button onclick="runStaticAnalysis('${f.sha256}', this, ${f.stale||f.static_status==='completed'?'true':'false'})">${f.stale||f.static_status==='completed'?'Re-analyse':'Analyse'}</button>`:'<span class="small">Not cached</span>'}</td></tr>`}).join('')||'<tr><td colspan="4">No files in job inventory.</td></tr>'}</table></div>`;
+   return `<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub">${esc(f.file_type||'-')} · ${esc(shortHash(f.sha256))}</div></td><td>${vtBadge(f.vt_verdict)}</td><td>${stale}${staticVerdictLabel(f.static_verdict, label)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}<div class="file-sub">${esc(f.static_status||'not_started')}${f.indicator_url_count?` · ${esc(f.indicator_url_count)} URL(s)`:''}</div></td><td>${f.cached?`<button onclick="runStaticAnalysis('${f.sha256}', this, ${f.stale||f.static_status==='completed'?'true':'false'})">${f.stale||f.static_status==='completed'?'Re-analyse':'Analyse'}</button>`:'<span class="small">Not cached</span>'}</td></tr>`}).join('')||'<tr><td colspan="4">No files in job inventory.</td></tr>'}</table></div>`;
+}
+function staticIndicatorList(title, items, link=false){
+ if(!items||!items.length)return '';
+ const rows=items.map(x=>{
+   const val=typeof x==='string'?x:(x.preview||x.url||JSON.stringify(x));
+   if(link && String(val).startsWith('http'))return `<div class="iocitem"><a href="${esc(val)}" target="_blank" rel="noopener" class="mono">${esc(val)}</a></div>`;
+   return `<div class="iocitem"><span class="mono">${esc(val)}</span>${x.method?`<div class="small">via ${esc(x.method)}</div>`:''}${(x.urls_found||[]).length?`<div class="small">URLs inside: ${(x.urls_found||[]).map(u=>esc(u)).join(', ')}</div>`:''}</div>`;
+ }).join('');
+ return `<div class="iocbox"><h3 class="subhead">${esc(title)} <span class="badge">${items.length}</span></h3>${rows}</div>`;
 }
 function renderStaticDetail(sha256,report){
  const el=document.getElementById('staticDetail'); if(!el)return;
- const n=report.analyst_narrative||{}; const v=report.static_verdict||{};
+ const n=report.analyst_narrative||{}; const v=report.static_verdict||{}; const ind=report.extracted_indicators||{};
  const label=v.verdict_label||n.headline||v.verdict||report.status||'Unknown';
  const what=(n.what_it_does||[]).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No summary available.</li>';
  const vtLine=n.vt_note?`<div class="info-box" style="margin-top:12px"><b>VirusTotal</b><div class="small">${esc(n.vt_note)}</div></div>`:'';
+ const counts=ind.counts||{};
+ const countCards=`<div class="cards" style="margin-top:14px"><div class="card"><div class="k">URLs</div><div class="v ${counts.urls?'err':''}">${esc(counts.urls||0)}</div></div><div class="card"><div class="k">Domains</div><div class="v ${counts.domains?'pending':''}">${esc(counts.domains||0)}</div></div><div class="card"><div class="k">IPs</div><div class="v">${esc(counts.ips||0)}</div></div><div class="card"><div class="k">Emails</div><div class="v">${esc(counts.emails||0)}</div></div><div class="card"><div class="k">Decoded</div><div class="v">${esc(counts.decoded_artifacts||0)}</div></div></div>`;
+ const indicatorsBlock=`<h3 class="subhead">Extracted from this file</h3>${countCards}<div class="grid2">${staticIndicatorList('URLs', ind.urls||[], true)}${staticIndicatorList('Domains', ind.domains||[])}${staticIndicatorList('IP addresses', ind.ips||[])}${staticIndicatorList('Email addresses', ind.emails||[])}${staticIndicatorList('Discord webhooks', ind.discord_webhooks||[], true)}${staticIndicatorList('Telegram links', ind.telegram||[], true)}${staticIndicatorList('Crypto wallets', ind.wallets||[])}${staticIndicatorList('Decoded / de-obfuscated strings', ind.decoded_artifacts||[])}${staticIndicatorList('Registry / persistence markers', ind.registry_markers||[])}${staticIndicatorList('File paths referenced', ind.file_paths||[])}</div>`;
  el.innerHTML=`<div class="root-card" style="padding:18px;border:1px solid rgba(255,98,98,.35);background:rgba(255,98,98,.06)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Static analysis result</div><div style="font-size:28px;font-weight:700" class="${verdictClass(v.verdict||label)}">${esc(label)}</div><div class="small" style="margin-top:8px">${esc(n.confidence_plain||('Confidence '+ (v.confidence??'-') + '%'))}</div></div>
  <div class="info-box" style="margin-top:14px"><b>What you need to know</b><ul style="margin:10px 0 0 18px;line-height:1.6">${what}</ul></div>
+ ${indicatorsBlock}
  <div class="info-box" style="margin-top:12px;border-color:rgba(255,209,102,.35)"><b>Recommended action</b><div class="small" style="margin-top:6px;line-height:1.5">${esc(n.assessment||'Review this file in an isolated environment before trusting it.')}</div></div>
  ${vtLine}
  <div class="btnrow" style="margin-top:14px"><button onclick="runStaticAnalysis('${sha256}', this, true)">Re-analyse this file</button></div>

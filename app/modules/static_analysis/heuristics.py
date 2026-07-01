@@ -31,6 +31,12 @@ def collect_signals(report: dict[str, Any]) -> list[dict[str, Any]]:
     if iocs.get('urls') or iocs.get('ips') or iocs.get('discord_webhooks'):
         add('network', 'embedded_iocs', 18, f"URLs={len(iocs.get('urls') or [])}, IPs={len(iocs.get('ips') or [])}")
 
+    extracted = report.get('extracted_indicators') or {}
+    if extracted.get('urls'):
+        add('network', 'extracted_urls', 16, f"URLs extracted: {', '.join(extracted['urls'][:3])}")
+    if extracted.get('discord_webhooks'):
+        add('network', 'discord_webhook', 28, extracted['discord_webhooks'][0])
+
     deob = report.get('deobfuscation') or {}
     if (deob.get('attempts') or 0) > 0 or deob.get('xor_candidates'):
         add('obfuscation', 'decoded_hidden_content', 22, f"Recovered {deob.get('attempts', 0)} decoded artifact(s)")

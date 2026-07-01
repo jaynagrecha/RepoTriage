@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 # Bump when analysis logic changes so stale cached reports are re-run automatically.
-STATIC_ANALYSIS_VERSION = '2.3.2'
+STATIC_ANALYSIS_VERSION = '2.3.3'
 
 
 def is_stale_record(record: dict[str, Any] | None) -> bool:

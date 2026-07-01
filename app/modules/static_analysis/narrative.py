@@ -34,6 +34,7 @@ def build_analyst_narrative(report: dict[str, Any], *, vt_verdict: str | None = 
     verdict = static.get('verdict', 'needs_review')
     suspicious = universal.get('suspicious_strings') or []
     iocs = universal.get('iocs') or {}
+    extracted = report.get('extracted_indicators') or {}
     logic = typed.get('logic_summary') or []
     patterns = typed.get('pattern_matches') or []
     language = typed.get('language') or profile.get('extension') or profile.get('category')
@@ -61,10 +62,21 @@ def build_analyst_narrative(report: dict[str, Any], *, vt_verdict: str | None = 
 
     urls = iocs.get('urls') or []
     domains = iocs.get('domains') or []
-    if urls:
-        bullets.append(f'Contains network URLs: {", ".join(urls[:2])}.')
-    if domains:
-        bullets.append(f'Contains domains: {", ".join(domains[:2])}.')
+    extracted = report.get('extracted_indicators') or {}
+    ext_urls = extracted.get('urls') or urls
+    ext_domains = extracted.get('domains') or domains
+    ext_ips = extracted.get('ips') or iocs.get('ips') or []
+
+    if ext_urls:
+        bullets.append(f'Contains {len(ext_urls)} URL(s) — e.g. {ext_urls[0]}')
+    if ext_domains and not ext_urls:
+        bullets.append(f'Contains {len(ext_domains)} domain(s) — e.g. {ext_domains[0]}')
+    if ext_ips:
+        bullets.append(f'Contains {len(ext_ips)} IP address(es) — e.g. {ext_ips[0]}')
+    if extracted.get('discord_webhooks'):
+        bullets.append(f'Contains Discord webhook(s) — potential exfil/C2 channel.')
+    if extracted.get('decoded_artifacts'):
+        bullets.append(f'De-obfuscation recovered {len(extracted["decoded_artifacts"])} hidden string(s) that may contain payloads or URLs.')
 
     if not bullets:
         bullets.append('No clear behavior summary was extracted. Check VirusTotal and consider sandbox analysis.')
@@ -84,8 +96,9 @@ def build_analyst_narrative(report: dict[str, Any], *, vt_verdict: str | None = 
     return {
         'headline': label,
         'assessment': _recommendation(verdict, filename, has_wsh),
-        'what_it_does': bullets[:5],
+        'what_it_does': bullets[:6],
         'vt_note': vt_note,
         'verdict_plain': verdict,
         'confidence_plain': f"{static.get('confidence', 0)}% confidence",
+        'indicator_summary': extracted.get('counts') or {},
     }

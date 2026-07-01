@@ -33,7 +33,7 @@ from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '2.3.2'
+APP_VERSION = '2.3.3'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -534,6 +534,8 @@ async def list_static_analysis(job_id: str):
             'static_confidence': (record.get('static_verdict') or {}).get('confidence'),
             'analysis_version': record.get('analysis_version'),
             'stale': stale,
+            'indicator_url_count': ((record.get('extracted_indicators') or {}).get('counts') or {}).get('urls', 0),
+            'indicator_total': (record.get('extracted_indicators') or {}).get('total', 0),
         })
     return {
         'job_id': job_id,
