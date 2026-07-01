@@ -1,8 +1,35 @@
-# RepoTriage v2.2B.4
+# RepoTriage v2.3.0
 
-GitHub and GitLab Payload Intelligence Platform — public job-based file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping and result-only browser output.
+GitHub and GitLab Payload Intelligence Platform — public job-based file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping, on-demand universal static analysis, and result-only browser output.
 
 ## Changelog
+
+### v2.3.0 — Universal on-demand static analysis
+
+- **Static Analysis** tab with per-file **Disassemble & Analyse** for every inventory file type
+- Job-scoped byte cache (`data/job_cache/{job_id}/{sha256}`) retained after quarantine cleanup
+- Universal pipeline: entropy, strings, IOC extraction, de-obfuscation (Base64/hex/ROT13/XOR/PowerShell/JS)
+- Typed analyzers: PE/ELF/binary (Capstone + optional radare2), scripts, documents, archives, images, text/unknown
+- Function/method logic extraction and cross-correlation with separate **static verdict** from VT
+- API:
+  - `GET /api/jobs/{job_id}/static-analysis`
+  - `POST /api/jobs/{job_id}/files/{sha256}/static-analysis`
+  - `GET /api/jobs/{job_id}/files/{sha256}/static-analysis`
+- Separate static-analysis rate limits (`STATIC_ANALYSIS_DAILY_LIMIT`, `STATIC_ANALYSIS_BURST_LIMIT`)
+
+**New environment variables**
+
+```env
+STATIC_ANALYSIS_ENABLED=true
+STATIC_ANALYSIS_TIMEOUT=180
+STATIC_ANALYSIS_DAILY_LIMIT=25
+STATIC_ANALYSIS_BURST_LIMIT=5
+STATIC_ANALYSIS_R2_TIMEOUT=120
+R2_BINARY=r2
+MAX_CACHED_FILE_BYTES=50000000
+```
+
+**Production note:** Install `radare2` on the worker for deepest disassembly/decompilation. Without r2, PE/ELF analysis falls back to Capstone + pefile.
 
 ### v2.2B.4 — GitLab file URL support
 

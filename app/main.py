@@ -12,6 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .modules.downloader import download_file, DownloadError
+from .modules.job_cache import cache_job_inventory, cached_file_path, load_manifest, manifest_entry
+from .modules.static_analysis import StaticAnalysisError, analyze_file_async
+from .modules.static_analysis.store import load_record, public_record, save_record
 from .modules.hash_engine import hash_file
 from .modules.file_type import guess_file_type
 from .modules.vt_lookup import lookup_file_hash, VTLookupError
@@ -29,7 +32,7 @@ from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '2.2B.4'
+APP_VERSION = '2.3.0'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -340,6 +343,8 @@ async def health():
         'job_mode': True,
         'rate_limit_enabled': USAGE_LIMITER.enabled,
         'free_daily_analysis_limit': USAGE_LIMITER.free_daily_limit,
+        'static_analysis_enabled': _env_truthy('STATIC_ANALYSIS_ENABLED', True),
+        'r2_available': bool(shutil.which(os.getenv('R2_BINARY', 'r2') or 'r2')),
         'burst_analysis_limit_per_minute': USAGE_LIMITER.burst_limit,
     }
 
@@ -349,7 +354,7 @@ async def _run_job(job_id: str, req: AnalyzeRequest) -> None:
     JOBS[job_id].update({'status': 'running', 'stage': 'analysis_started', 'updated_at': now})
     _save_job(job_id)
     try:
-        result = await run_analysis(req)
+        result = await run_analysis(req, job_id=job_id)
         JOBS[job_id].update({
             'status': 'completed',
             'stage': 'completed',
@@ -451,6 +456,153 @@ async def export_job_report_html(job_id: str):
     report = job['result'].get('analyst_report') or build_analyst_report(job['result'])
     return HTMLResponse(report.get('html',''))
 
+
+STATIC_ANALYSIS_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _static_task_key(job_id: str, sha256: str) -> str:
+    return f'{job_id}:{sha256.lower()}'
+
+
+def _require_static_analysis_enabled() -> None:
+    if not _env_truthy('STATIC_ANALYSIS_ENABLED', True):
+        raise HTTPException(status_code=503, detail='Static analysis is disabled on this deployment')
+
+
+async def _execute_static_analysis(job_id: str, sha256: str, entry: dict) -> None:
+    key = _static_task_key(job_id, sha256)
+    record = {
+        'job_id': job_id,
+        'sha256': sha256.lower(),
+        'status': 'running',
+        'started_at': datetime.now(timezone.utc).isoformat(),
+        'filename': entry.get('display_name') or entry.get('filename'),
+        'file_type': entry.get('file_type'),
+    }
+    save_record(BASE_DIR, job_id, sha256, record)
+    try:
+        path = cached_file_path(BASE_DIR, job_id, sha256)
+        if not path:
+            raise StaticAnalysisError('Cached file bytes are unavailable for this hash')
+        report = await analyze_file_async(
+            path,
+            filename=entry.get('display_name') or entry.get('filename'),
+            declared_type=entry.get('file_type'),
+            sha256=sha256,
+        )
+        record.update(public_record(report) or {})
+        record['status'] = 'completed'
+        record['completed_at'] = datetime.now(timezone.utc).isoformat()
+        save_record(BASE_DIR, job_id, sha256, record)
+    except Exception as exc:
+        record.update({
+            'status': 'failed',
+            'error': str(exc)[:500],
+            'completed_at': datetime.now(timezone.utc).isoformat(),
+        })
+        save_record(BASE_DIR, job_id, sha256, record)
+    finally:
+        STATIC_ANALYSIS_TASKS.pop(key, None)
+
+
+@app.get('/api/jobs/{job_id}/static-analysis')
+async def list_static_analysis(job_id: str):
+    _require_static_analysis_enabled()
+    job = _load_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    manifest = load_manifest(BASE_DIR, job_id) or {'files': []}
+    items = []
+    for entry in manifest.get('files') or []:
+        sha256 = (entry.get('sha256') or '').lower()
+        if not sha256:
+            continue
+        record = public_record(load_record(BASE_DIR, job_id, sha256)) or {'status': 'not_started'}
+        items.append({
+            'sha256': sha256,
+            'filename': entry.get('display_name') or entry.get('filename'),
+            'file_type': entry.get('file_type'),
+            'cached': bool(entry.get('cached')),
+            'cache_reason': entry.get('cache_reason'),
+            'vt_verdict': entry.get('vt_verdict'),
+            'static_status': record.get('status', 'not_started'),
+            'static_verdict': (record.get('static_verdict') or {}).get('verdict'),
+            'static_confidence': (record.get('static_verdict') or {}).get('confidence'),
+        })
+    return {
+        'job_id': job_id,
+        'job_status': job.get('status'),
+        'files': items,
+        'static_analysis_enabled': True,
+    }
+
+
+@app.get('/api/jobs/{job_id}/files/{sha256}/static-analysis')
+async def get_static_analysis(job_id: str, sha256: str):
+    _require_static_analysis_enabled()
+    job = _load_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    record = public_record(load_record(BASE_DIR, job_id, sha256.lower()))
+    if not record:
+        entry = manifest_entry(BASE_DIR, job_id, sha256.lower())
+        if not entry:
+            raise HTTPException(status_code=404, detail='File hash not found in this job')
+        return {
+            'job_id': job_id,
+            'sha256': sha256.lower(),
+            'status': 'not_started',
+            'cached': bool(entry.get('cached')),
+            'cache_reason': entry.get('cache_reason'),
+        }
+    return record
+
+
+@app.post('/api/jobs/{job_id}/files/{sha256}/static-analysis')
+async def start_static_analysis(job_id: str, sha256: str, request: Request):
+    _require_static_analysis_enabled()
+    job = _load_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    if job.get('status') != 'completed':
+        raise HTTPException(status_code=409, detail='Job must complete before static analysis can run')
+
+    target = sha256.lower()
+    entry = manifest_entry(BASE_DIR, job_id, target)
+    if not entry:
+        raise HTTPException(status_code=404, detail='File hash not found in this job inventory')
+    if not entry.get('cached'):
+        raise HTTPException(status_code=409, detail=entry.get('cache_reason') or 'File bytes were not cached for static analysis')
+
+    ip = get_client_ip(request)
+    admin_token = request.headers.get('x-admin-bypass-token')
+    try:
+        USAGE_LIMITER.check_static_analysis(ip, admin_token)
+    except RateLimitExceeded as e:
+        raise HTTPException(status_code=429, detail={'message': e.message, 'usage': e.status})
+
+    existing = load_record(BASE_DIR, job_id, target)
+    if existing and existing.get('status') == 'running':
+        return public_record(existing)
+    if existing and existing.get('status') == 'completed':
+        return public_record(existing)
+
+    key = _static_task_key(job_id, target)
+    if key in STATIC_ANALYSIS_TASKS and not STATIC_ANALYSIS_TASKS[key].done():
+        record = public_record(load_record(BASE_DIR, job_id, target))
+        return record or {'status': 'running', 'job_id': job_id, 'sha256': target}
+
+    queued = {
+        'job_id': job_id,
+        'sha256': target,
+        'status': 'queued',
+        'queued_at': datetime.now(timezone.utc).isoformat(),
+        'filename': entry.get('display_name') or entry.get('filename'),
+    }
+    save_record(BASE_DIR, job_id, target, queued)
+    STATIC_ANALYSIS_TASKS[key] = asyncio.create_task(_execute_static_analysis(job_id, target, entry))
+    return public_record(load_record(BASE_DIR, job_id, target)) or queued
+
 @app.post('/api/analyze')
 async def analyze_endpoint(req: AnalyzeRequest):
     if not _env_truthy('ALLOW_SYNC_ANALYZE'):
@@ -465,7 +617,7 @@ async def analyze_endpoint(req: AnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def run_analysis(req: AnalyzeRequest) -> dict:
+async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
     meta: dict | None = None
     extraction: dict = {'root_is_archive': False}
     try:
@@ -750,6 +902,8 @@ async def run_analysis(req: AnalyzeRequest) -> dict:
             'exports_available': ['json', 'csv', 'stix', 'misp', 'html_report'],
             'summary': summary,
         }
+        if job_id:
+            cache_job_inventory(BASE_DIR, job_id, inventory)
         return _public_result(result)
     finally:
         _cleanup_quarantine(meta, extraction)

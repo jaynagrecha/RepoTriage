@@ -53,6 +53,8 @@ class UsageLimiter:
         self.max_running_per_ip = _int_env("MAX_RUNNING_JOBS_PER_IP", 2)
         self.max_url_length = _int_env("MAX_INPUT_URL_LENGTH", 2048)
         self.admin_bypass_token = os.getenv("ADMIN_BYPASS_TOKEN", "").strip()
+        self.static_daily_limit = _int_env("STATIC_ANALYSIS_DAILY_LIMIT", 25)
+        self.static_burst_limit = _int_env("STATIC_ANALYSIS_BURST_LIMIT", 5)
 
     def _today(self) -> str:
         return time.strftime("%Y-%m-%d", time.gmtime())
@@ -159,3 +161,30 @@ class UsageLimiter:
             rec["last_seen"] = now
 
         return self.get_status(ip, active_jobs, is_admin)
+
+    def check_static_analysis(self, ip: str, admin_token: str | None = None) -> dict[str, Any]:
+        is_admin = bool(self.admin_bypass_token and admin_token and admin_token == self.admin_bypass_token)
+        if not self.enabled or is_admin:
+            return {'enabled': self.enabled, 'admin_bypass': is_admin}
+
+        now = self._now()
+        today = self._today()
+        with self._locked_usage() as data:
+            ips = data.setdefault("ips", {})
+            rec = ips.setdefault(ip, {"daily": {}, "recent": [], "static_daily": {}, "static_recent": []})
+            rec["static_recent"] = [float(t) for t in rec.get("static_recent", []) if now - float(t) <= 60]
+            used_today = int(rec.setdefault("static_daily", {}).get(today, 0))
+
+            if len(rec["static_recent"]) >= self.static_burst_limit:
+                raise RateLimitExceeded(
+                    f"Static analysis burst limit reached. Limit: {self.static_burst_limit}/minute.",
+                    self.get_status(ip, 0, is_admin),
+                )
+            if used_today >= self.static_daily_limit:
+                raise RateLimitExceeded(
+                    f"Daily static analysis limit reached. Limit: {self.static_daily_limit}/day.",
+                    self.get_status(ip, 0, is_admin),
+                )
+            rec["static_recent"].append(now)
+            rec["static_daily"][today] = used_today + 1
+        return {'enabled': True, 'used_today': used_today + 1, 'daily_limit': self.static_daily_limit}

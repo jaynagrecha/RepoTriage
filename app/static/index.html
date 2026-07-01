@@ -97,7 +97,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.4 GitLab</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3 Static RE</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -107,6 +107,7 @@
 <script>
 const tabGroups=[
   {label:'Summary',tabs:['Overview','Files','Executive Summary']},
+  {label:'Deep Analysis',tabs:['Static Analysis']},
   {label:'CTI Fusion',tabs:['CTI Summary','Campaign Analysis','Threat Actor','Correlation Matrix','Infrastructure Graph','Related Samples']},
   {label:'Intel Sources',tabs:['VirusTotal','AbuseCH','ThreatFox','MalwareBazaar','URLHaus','Feodo','SSLBL','Infrastructure']},
   {label:'Reporting',tabs:['Exports','Analyst Report','Attack Narrative','MITRE ATT&CK','Raw JSON']}
@@ -165,7 +166,7 @@ function render(j){document.getElementById('results').style.display='block';cons
 const tabs=document.getElementById('tabs');
 tabs.innerHTML=tabGroups.map(g=>`<div class="tab-section"><span class="tab-section-label">${esc(g.label)}</span>${g.tabs.map(t=>{const i=tabNames.indexOf(t); return `<button class="tab ${i==0?'active':''}" data-tab="${i}" onclick="showTab(${i})">${esc(t)}</button>`}).join('')}<span class="tab-sep"></span></div>`).join('');
 document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');
-queueMicrotask(()=>{const gc=document.getElementById('infraGraphCanvas'); if(gc)initGraphCanvas(gc);});}
+queueMicrotask(()=>{const gc=document.getElementById('infraGraphCanvas'); if(gc)initGraphCanvas(gc); refreshStaticTable();});}
 function showTab(i){document.querySelectorAll('.tab').forEach((e,n)=>e.classList.toggle('active',n===i));document.querySelectorAll('.tabbody').forEach((e,n)=>e.classList.toggle('active',n===i))}
 function displayName(x){return x.original_name || x.filename || x.path || 'file'}
 function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) sub.push(x.filename); if(x.stored_name) sub.push('stored as: '+x.stored_name); if(x.blocked_by_local_av) sub.push('local AV blocked/quarantined storage; hash captured in-memory'); if(x.analysis_note) sub.push(x.analysis_note); return `<tr><td><div class="file-path">${esc(displayName(x))}</div><div class="file-sub">${esc(sub.join(' · '))}</div></td><td>${esc(x.file_type||'-')}</td><td>${fmtBytes(x.size_bytes)}</td><td class="hashcell mono"><div class="hashline"><span class="hashlabel">MD5</span><span class="hashval" title="${fullHash(x.md5)}">${esc(shortHash(x.md5))}</span></div><div class="hashline"><span class="hashlabel">SHA1</span><span class="hashval" title="${fullHash(x.sha1)}">${esc(shortHash(x.sha1))}</span></div><div class="hashline"><span class="hashlabel">SHA256</span><span class="hashval" title="${fullHash(x.sha256)}">${esc(shortHash(x.sha256))}</span></div></td><td>${vtBadge(x.vt_verdict)}<div class="file-sub">${Number(x.vt_malicious||0)} malicious / ${Number(x.vt_suspicious||0)} suspicious</div></td><td>${x.vt_link?`<a href="${esc(x.vt_link)}" target="_blank">VT Report</a>`:'-'}</td></tr>`}
@@ -176,6 +177,59 @@ html+=`<div class="group"><div class="group-head"><div><div class="group-title">
 Object.entries(groups).forEach(([parent,rows],idx)=>{const mal=rows.filter(x=>String(x.vt_verdict).toLowerCase().includes('malicious')).length; const arc=rows.filter(x=>x.is_archive).length; html+=`<div class="group file-group"><div class="group-head"><div><div class="group-title">Children of Archive ${idx+1}</div><div class="group-meta mono">${esc(parent)}</div></div><div><span class="badge">${rows.length} files</span><span class="badge ${mal?'bad':'ok'}">${mal} malicious</span>${arc?`<span class="badge warn">${arc} nested archive(s)</span>`:''}</div></div><div style="padding:14px">${fileTable(rows)}</div></div>`});
 if((j.extraction?.errors||[]).length){html+=`<h3 class="subhead">Extraction Issues</h3><div class="tablewrap"><table class="filetable"><tr><th>Issue</th></tr>${(j.extraction.errors||[]).map(e=>`<tr><td class="err mono">${esc(e)}</td></tr>`).join('')}</table></div>`} return html}
 function filterFiles(){const q=(document.getElementById('fileFilter')?.value||'').toLowerCase();document.querySelectorAll('.filetable tr').forEach((tr,i)=>{if(i===0)return;tr.style.display=tr.innerText.toLowerCase().includes(q)?'':'none'})}
+
+function staticVerdictBadge(v){return `<span class="badge ${verdictClass(v)}">${esc(v||'not run')}</span>`}
+async function runStaticAnalysis(sha256, btn){
+ if(!currentJobId)return alert('Run a completed analysis job first');
+ if(btn)btn.disabled=true;
+ try{
+   const r=await fetch(`/api/jobs/${currentJobId}/files/${sha256}/static-analysis`,{method:'POST'});
+   const j=await r.json();
+   if(!r.ok)throw new Error(apiDetail(j.detail)||'Static analysis request failed');
+   let attempts=0;
+   while(attempts<240){
+     attempts++;
+     const pr=await fetch(`/api/jobs/${currentJobId}/files/${sha256}/static-analysis`);
+     const pj=await pr.json();
+     if(!pr.ok)throw new Error(apiDetail(pj.detail)||'Static analysis polling failed');
+     if(pj.status==='completed'||pj.status==='failed'){renderStaticDetail(sha256,pj); refreshStaticTable(); return}
+     const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`<div class="info-box"><b>Static analysis running</b><div class="small">${esc(pj.status||'running')} · ${esc(pj.filename||sha256.slice(0,12))}</div></div>`;
+     await new Promise(res=>setTimeout(res,1000));
+   }
+   throw new Error('Static analysis timed out');
+ }catch(e){alert(e.message)}
+ finally{if(btn)btn.disabled=false; refreshStaticTable()}
+}
+async function refreshStaticTable(){
+ if(!currentJobId)return;
+ const host=document.getElementById('staticTableHost'); if(!host)return;
+ try{
+   const r=await fetch(`/api/jobs/${currentJobId}/static-analysis`);
+   const j=await r.json();
+   if(!r.ok){host.innerHTML=`<div class="err">${esc(apiDetail(j.detail)||'Unable to load static analysis inventory')}</div>`; return}
+   host.innerHTML=staticFilesTable(j.files||[]);
+ }catch(e){host.innerHTML=`<div class="err">${esc(e.message)}</div>`}
+}
+function staticFilesTable(files){
+ return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>Cached</th><th>VT</th><th>Static Status</th><th>Static Verdict</th><th>Action</th></tr>${(files||[]).map(f=>`<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub mono">${esc(shortHash(f.sha256))}</div></td><td>${esc(f.file_type||'-')}</td><td>${f.cached?'<span class="badge ok">yes</span>':`<span class="badge warn">${esc(f.cache_reason||'no')}</span>`}</td><td>${vtBadge(f.vt_verdict)}</td><td>${esc(f.static_status||'not_started')}</td><td>${staticVerdictBadge(f.static_verdict)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}</td><td>${f.cached?`<button onclick="runStaticAnalysis('${esc(f.sha256)}', this)">Disassemble &amp; Analyse</button>`:'<span class="small">Unavailable</span>'}</td></tr>`).join('')||'<tr><td colspan="7">No files in job inventory.</td></tr>'}</table></div>`;
+}
+function renderStaticDetail(sha256,report){
+ const el=document.getElementById('staticDetail'); if(!el)return;
+ const v=report.static_verdict||{}; const prof=report.profile||{}; const corr=report.correlation||{}; const typed=report.typed_analysis||{}; const deob=report.deobfuscation||{}; const fns=report.functions||[];
+ const fnRows=fns.slice(0,20).map(fn=>`<tr><td>${esc(fn.name||'-')}</td><td>${esc((fn.logic_tags||fn.logic_summary||[]).join(', ')||'-')}</td><td><pre>${esc(fn.disassembly_preview||fn.snippet_preview||fn.decompilation_preview||'-')}</pre></td></tr>`).join('')||'<tr><td colspan="3">No function-level output for this file type.</td></tr>';
+ const sigRows=(v.signals||[]).slice(0,20).map(s=>`<tr><td>${esc(s.category)}</td><td>${esc(s.label)}</td><td>${esc(s.weight)}</td><td>${esc(s.evidence)}</td></tr>`).join('')||'<tr><td colspan="4">No signals recorded.</td></tr>';
+ const rec=(deob.recovered||[]).slice(0,10).map(x=>`<div class="iocitem"><span class="mono">${esc(x.method||'-')}</span><div class="small">${esc(x.decoded_preview||x.source_preview||'')}</div></div>`).join('')||'<div class="small">No de-obfuscation recoveries.</div>';
+ el.innerHTML=`<div class="cards"><div class="card"><div class="k">Static Verdict</div><div class="v ${verdictClass(v.verdict)}">${esc(v.verdict||report.status||'-')}</div><div class="small">Confidence ${esc(v.confidence??'-')}% · Score ${esc(v.score??'-')}</div></div><div class="card"><div class="k">Profile</div><div class="v">${esc(prof.category||'-')}</div><div class="small">${esc(prof.mime_hint||'-')} · ${esc(prof.extension||'-')}</div></div><div class="card"><div class="k">Functions</div><div class="v">${esc(corr.function_count||fns.length||0)}</div></div><div class="card"><div class="k">Recovered Artifacts</div><div class="v">${esc(corr.recovered_artifacts||0)}</div></div></div>
+ <div class="info-box"><b>Rationale</b><div class="small">${(v.rationale||[]).map(x=>esc(x)).join('<br>')||esc(v.note||'No rationale available.')}</div></div>
+ <h3 class="subhead">Correlation</h3><div class="grid2">${listBlock('Links', (corr.links||[]).map(x=>`${x.type}: ${x.detail}`))}${listBlock('Suspicious Strings', (report.universal?.suspicious_strings||[]).slice(0,15))}</div>
+ <h3 class="subhead">De-obfuscation / Decoding</h3>${rec}
+ <h3 class="subhead">Evidence Signals</h3><div class="tablewrap"><table class="filetable"><tr><th>Category</th><th>Label</th><th>Weight</th><th>Evidence</th></tr>${sigRows}</table></div>
+ <h3 class="subhead">Function / Method Logic</h3><div class="tablewrap"><table class="filetable"><tr><th>Name</th><th>Logic Tags</th><th>Preview</th></tr>${fnRows}</table></div>
+ <h3 class="subhead">Typed Analysis Summary</h3><pre>${esc(JSON.stringify({logic_summary:typed.logic_summary||[], language:typed.language, format:typed.format, pattern_matches:(typed.pattern_matches||[]).slice(0,10)}, null, 2))}</pre>`;
+}
+function staticAnalysisHtml(){
+ return `<div class="info-box"><b>Universal Static Analysis</b><div class="small">On-demand reverse-engineering for every file in the job inventory — PE/ELF, scripts, documents, archives, images, configs, and unknown binaries. Static verdict is independent from VirusTotal.</div></div><div id="staticTableHost"><div class="small">Load a completed job to enumerate analyzable files…</div></div><h3 class="subhead">Selected File Report</h3><div id="staticDetail" class="detailpane">Run static analysis on a cached file to view disassembly, de-obfuscation, function logic, correlation, and static verdict.</div>`;
+}
 
 function listBlock(title, items, cls=''){
   const rows=(items||[]).map(x=>{
@@ -486,6 +540,7 @@ function vtDetectionsTable(v){const detections=(v?.top_detections||[]).map(d=>`<
 function vtHtml(j){const v=j.vt||{};const rows=(j.files||[]).map(x=>`<tr><td><div class="file-path">${esc(displayName(x))}</div></td><td>${vtBadge(x.vt_verdict)}</td><td>${esc((x.vt_malicious??0)+' / '+(x.vt_suspicious??0))}</td><td>${x.vt_link?`<a target="_blank" href="${esc(x.vt_link)}">VT Report</a>`:'-'}</td></tr>`).join('');const tags=(v.tags||[]).map(n=>`<span class="badge ok">${esc(n)}</span>`).join('')||'<span class="badge">None</span>';const names=(v.names||[]).map(n=>`<li>${esc(n)}</li>`).join('')||'<li>None</li>';return `<div class="cards">${vtSummaryCard(v,'Root File Verdict')}<div class="card"><div class="k">Detections</div><div class="v">${esc(v.detections_summary||'-')}</div></div><div class="card"><div class="k">Family / Label</div><div class="v">${esc(v.family?.name||'Unknown')}</div><div class="small">Confidence ${esc(v.family?.confidence||0)}%</div></div><div class="card"><div class="k">Reputation</div><div class="v">${esc(v.reputation ?? '-')}</div></div><div class="card"><div class="k">VT Status</div><div class="v">${esc(v.status||'unknown')}</div></div></div><h3 class="subhead">All File VT Verdicts</h3><div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Verdict</th><th>Malicious / Suspicious</th><th>Report</th></tr>${rows}</table></div><h3 class="subhead">Root File Top Detections</h3>${vtDetectionsTable(v)}<h3 class="subhead">Root File Tags</h3><div class="status">${tags}</div><h3 class="subhead">Root File Names</h3><ul>${names}</ul>`}
 function tabHtml(t,j){const f=j.root_file||{}, s=j.source||{}; if(t==='Overview')return `<div class="root-card"><div class="info-box"><div class="info-label">Source URL</div><div class="info-value"><a href="${esc(s.display_url)}" target="_blank">${esc(s.display_url)}</a></div></div><div class="info-box"><div class="info-label">Owner / Repo</div><div class="info-value">${esc(s.owner)}/${esc(s.repo)}</div></div><div class="info-box"><div class="info-label">Root File</div><div class="info-value">${esc(f.filename)}</div></div><div class="info-box"><div class="info-label">Root VT</div><div class="info-value">${vtBadge(j.vt?.verdict)}</div></div></div><h3 class="subhead">Hashes</h3><div class="tablewrap"><table class="filetable"><tr><th>MD5</th><th>SHA1</th><th>SHA256</th></tr><tr><td class="mono">${esc(f.md5)}</td><td class="mono">${esc(f.sha1)}</td><td class="mono">${esc(f.sha256)}</td></tr></table></div><h3 class="subhead">Public Analysis Safety</h3><div class="grid2"><div class="info-box"><div class="info-label">Sample Handling</div><div class="info-value">Server-side only</div><div class="small">The browser receives only metadata, hashes, IOCs, CTI enrichment and reports.</div></div><div class="info-box"><div class="info-label">Mode</div><div class="info-value">${esc(j.safety?.analysis_mode||'local_dev')}</div><div class="small">Production should run this behind an isolated Linux worker/container.</div></div></div><h3 class="subhead">Extraction Summary</h3><div class="cards"><div class="card"><div class="k">Total Listed</div><div class="v">${esc(j.file_stats?.total_listed||1)}</div></div><div class="card"><div class="k">Extracted Children</div><div class="v">${esc(j.file_stats?.extracted_children||0)}</div></div><div class="card"><div class="k">Malicious</div><div class="v ${j.file_stats?.malicious?'err':''}">${esc(j.file_stats?.malicious||0)}</div></div><div class="card"><div class="k">Suspicious</div><div class="v ${j.file_stats?.suspicious?'pending':''}">${esc(j.file_stats?.suspicious||0)}</div></div><div class="card"><div class="k">Errors</div><div class="v">${esc(j.file_stats?.errors||0)}</div></div><div class="card"><div class="k">IOCs</div><div class="v">${esc(j.file_stats?.iocs||0)}</div></div></div>`;
 if(t==='Files')return groupedFilesHtml(j);
+if(t==='Static Analysis')return staticAnalysisHtml();
 if(t==='CTI Summary')return ctiSummaryHtml(j);
 if(t==='Campaign Analysis')return campaignHtml(j);
 if(t==='Threat Actor')return actorHtml(j);
