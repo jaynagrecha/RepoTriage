@@ -17,6 +17,7 @@ from .types import FileProfile, classify_file, _content_looks_like_script, _exte
 from .universal import analyze_universal
 from .verdict import build_verdict
 from .narrative import build_analyst_narrative
+from .versioning import STATIC_ANALYSIS_VERSION
 
 
 class StaticAnalysisError(Exception):
@@ -98,7 +99,7 @@ def _typed_analysis(path: Path, profile: FileProfile, *, filename: str | None = 
     return analyze_text(path)
 
 
-def analyze_file(path: Path, *, filename: str | None = None, declared_type: str | None = None, sha256: str | None = None) -> dict[str, Any]:
+def analyze_file(path: Path, *, filename: str | None = None, declared_type: str | None = None, sha256: str | None = None, vt_verdict: str | None = None) -> dict[str, Any]:
     if not _env_truthy('STATIC_ANALYSIS_ENABLED', True):
         raise StaticAnalysisError('Static analysis is disabled')
 
@@ -125,6 +126,7 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
 
     report = {
         'status': 'completed',
+        'analysis_version': STATIC_ANALYSIS_VERSION,
         'analyzed_at': datetime.now(timezone.utc).isoformat(),
         'filename': filename or path.name,
         'sha256': (sha256 or '').lower() or None,
@@ -142,7 +144,9 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
     }
     report['correlation'] = _correlate(report)
     report['static_verdict'] = build_verdict(report)
-    report['analyst_narrative'] = build_analyst_narrative(report)
+    report['analyst_narrative'] = build_analyst_narrative(report, vt_verdict=vt_verdict)
+    if vt_verdict:
+        report['vt_verdict'] = vt_verdict
     return report
 
 

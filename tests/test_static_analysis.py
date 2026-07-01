@@ -75,7 +75,7 @@ class TestStaticAnalysisEngine(unittest.TestCase):
         try:
             report = analyze_file(path, filename='test.ps1', declared_type='PS1')
             self.assertEqual(report['status'], 'completed')
-            self.assertIn(report['static_verdict']['verdict'], {'malicious', 'suspicious', 'inconclusive', 'clean'})
+            self.assertIn(report['static_verdict']['verdict'], {'malicious', 'suspicious', 'needs_review', 'clean'})
             self.assertTrue(report['typed_analysis']['language'] == 'powershell')
         finally:
             path.unlink(missing_ok=True)

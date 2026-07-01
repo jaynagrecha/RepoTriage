@@ -15,6 +15,7 @@ from .modules.downloader import download_file, DownloadError
 from .modules.job_cache import cache_job_inventory, cached_file_path, load_manifest, manifest_entry
 from .modules.static_analysis import StaticAnalysisError, analyze_file_async
 from .modules.static_analysis.store import load_record, public_record, save_record
+from .modules.static_analysis.versioning import is_stale_record, STATIC_ANALYSIS_VERSION
 from .modules.hash_engine import hash_file
 from .modules.file_type import guess_file_type
 from .modules.vt_lookup import lookup_file_hash, VTLookupError
@@ -32,7 +33,7 @@ from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '2.3.1'
+APP_VERSION = '2.3.2'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -489,6 +490,7 @@ async def _execute_static_analysis(job_id: str, sha256: str, entry: dict) -> Non
             filename=entry.get('display_name') or entry.get('filename'),
             declared_type=entry.get('file_type'),
             sha256=sha256,
+            vt_verdict=entry.get('vt_verdict'),
         )
         record.update(public_record(report) or {})
         record['status'] = 'completed'
@@ -518,6 +520,7 @@ async def list_static_analysis(job_id: str):
         if not sha256:
             continue
         record = public_record(load_record(BASE_DIR, job_id, sha256)) or {'status': 'not_started'}
+        stale = is_stale_record(record if record.get('status') == 'completed' else None)
         items.append({
             'sha256': sha256,
             'filename': entry.get('display_name') or entry.get('filename'),
@@ -527,13 +530,17 @@ async def list_static_analysis(job_id: str):
             'vt_verdict': entry.get('vt_verdict'),
             'static_status': record.get('status', 'not_started'),
             'static_verdict': (record.get('static_verdict') or {}).get('verdict'),
+            'static_verdict_label': (record.get('static_verdict') or {}).get('verdict_label'),
             'static_confidence': (record.get('static_verdict') or {}).get('confidence'),
+            'analysis_version': record.get('analysis_version'),
+            'stale': stale,
         })
     return {
         'job_id': job_id,
         'job_status': job.get('status'),
         'files': items,
         'static_analysis_enabled': True,
+        'static_analysis_version': STATIC_ANALYSIS_VERSION,
     }
 
 
@@ -559,7 +566,7 @@ async def get_static_analysis(job_id: str, sha256: str):
 
 
 @app.post('/api/jobs/{job_id}/files/{sha256}/static-analysis')
-async def start_static_analysis(job_id: str, sha256: str, request: Request):
+async def start_static_analysis(job_id: str, sha256: str, request: Request, force: bool = False):
     _require_static_analysis_enabled()
     job = _load_job(job_id)
     if not job:
@@ -574,18 +581,24 @@ async def start_static_analysis(job_id: str, sha256: str, request: Request):
     if not entry.get('cached'):
         raise HTTPException(status_code=409, detail=entry.get('cache_reason') or 'File bytes were not cached for static analysis')
 
-    ip = get_client_ip(request)
-    admin_token = request.headers.get('x-admin-bypass-token')
-    try:
-        USAGE_LIMITER.check_static_analysis(ip, admin_token)
-    except RateLimitExceeded as e:
-        raise HTTPException(status_code=429, detail={'message': e.message, 'usage': e.status})
-
     existing = load_record(BASE_DIR, job_id, target)
+    stale = is_stale_record(existing)
+    if force or stale:
+        existing = None
     if existing and existing.get('status') == 'running':
         return public_record(existing)
     if existing and existing.get('status') == 'completed':
-        return public_record(existing)
+        out = public_record(existing) or {}
+        out['stale'] = False
+        return out
+
+    ip = get_client_ip(request)
+    admin_token = request.headers.get('x-admin-bypass-token')
+    if not stale:
+        try:
+            USAGE_LIMITER.check_static_analysis(ip, admin_token)
+        except RateLimitExceeded as e:
+            raise HTTPException(status_code=429, detail={'message': e.message, 'usage': e.status})
 
     key = _static_task_key(job_id, target)
     if key in STATIC_ANALYSIS_TASKS and not STATIC_ANALYSIS_TASKS[key].done():

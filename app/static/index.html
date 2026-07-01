@@ -97,7 +97,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3.1 Analyst</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3.2 Clear</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -178,12 +178,40 @@ Object.entries(groups).forEach(([parent,rows],idx)=>{const mal=rows.filter(x=>St
 if((j.extraction?.errors||[]).length){html+=`<h3 class="subhead">Extraction Issues</h3><div class="tablewrap"><table class="filetable"><tr><th>Issue</th></tr>${(j.extraction.errors||[]).map(e=>`<tr><td class="err mono">${esc(e)}</td></tr>`).join('')}</table></div>`} return html}
 function filterFiles(){const q=(document.getElementById('fileFilter')?.value||'').toLowerCase();document.querySelectorAll('.filetable tr').forEach((tr,i)=>{if(i===0)return;tr.style.display=tr.innerText.toLowerCase().includes(q)?'':'none'})}
 
-function staticVerdictBadge(v){return `<span class="badge ${verdictClass(v)}">${esc(v||'not run')}</span>`}
-async function runStaticAnalysis(sha256, btn){
+function staticVerdictLabel(v, label){
+ const text=label||v||'not run';
+ return `<span class="badge ${verdictClass(v||text)}">${esc(text.replace(/_/g,' '))}</span>`;
+}
+function staticFilesTable(files){
+ return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>VT</th><th>Static Result</th><th>Action</th></tr>${(files||[]).map(f=>{
+   const stale=f.stale?'<span class="badge warn">outdated</span> ':'';
+   const label=f.static_verdict_label||f.static_verdict||'not run';
+   return `<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub">${esc(f.file_type||'-')} · ${esc(shortHash(f.sha256))}</div></td><td>${vtBadge(f.vt_verdict)}</td><td>${stale}${staticVerdictLabel(f.static_verdict, label)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}<div class="file-sub">${esc(f.static_status||'not_started')}</div></td><td>${f.cached?`<button onclick="runStaticAnalysis('${f.sha256}', this, ${f.stale||f.static_status==='completed'?'true':'false'})">${f.stale||f.static_status==='completed'?'Re-analyse':'Analyse'}</button>`:'<span class="small">Not cached</span>'}</td></tr>`}).join('')||'<tr><td colspan="4">No files in job inventory.</td></tr>'}</table></div>`;
+}
+function renderStaticDetail(sha256,report){
+ const el=document.getElementById('staticDetail'); if(!el)return;
+ const n=report.analyst_narrative||{}; const v=report.static_verdict||{};
+ const label=v.verdict_label||n.headline||v.verdict||report.status||'Unknown';
+ const what=(n.what_it_does||[]).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No summary available.</li>';
+ const vtLine=n.vt_note?`<div class="info-box" style="margin-top:12px"><b>VirusTotal</b><div class="small">${esc(n.vt_note)}</div></div>`:'';
+ el.innerHTML=`<div class="root-card" style="padding:18px;border:1px solid rgba(255,98,98,.35);background:rgba(255,98,98,.06)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Static analysis result</div><div style="font-size:28px;font-weight:700" class="${verdictClass(v.verdict||label)}">${esc(label)}</div><div class="small" style="margin-top:8px">${esc(n.confidence_plain||('Confidence '+ (v.confidence??'-') + '%'))}</div></div>
+ <div class="info-box" style="margin-top:14px"><b>What you need to know</b><ul style="margin:10px 0 0 18px;line-height:1.6">${what}</ul></div>
+ <div class="info-box" style="margin-top:12px;border-color:rgba(255,209,102,.35)"><b>Recommended action</b><div class="small" style="margin-top:6px;line-height:1.5">${esc(n.assessment||'Review this file in an isolated environment before trusting it.')}</div></div>
+ ${vtLine}
+ <div class="btnrow" style="margin-top:14px"><button onclick="runStaticAnalysis('${sha256}', this, true)">Re-analyse this file</button></div>
+ <details class="rel" style="margin-top:14px"><summary><b>Technical evidence</b> <span class="badge">for specialists</span></summary>
+ <pre style="white-space:pre-wrap;font-size:12px">${esc((v.rationale||[]).join('\n')||'No technical rationale recorded.')}</pre>
+ </details>`;
+}
+function staticAnalysisHtml(){
+ return `<div class="info-box"><b>Static Analysis</b><div class="small">Plain-English malware assessment for each file. Click Analyse — results explain what the file does and what action to take. Technical evidence is optional.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse.</div>`;
+}
+async function runStaticAnalysis(sha256, btn, force=false){
  if(!currentJobId)return alert('Run a completed analysis job first');
  if(btn)btn.disabled=true;
  try{
-   const r=await fetch(`/api/jobs/${currentJobId}/files/${sha256}/static-analysis`,{method:'POST'});
+   const url=`/api/jobs/${currentJobId}/files/${sha256}/static-analysis${force?'?force=true':''}`;
+   const r=await fetch(url,{method:'POST'});
    const j=await r.json();
    if(!r.ok)throw new Error(apiDetail(j.detail)||'Static analysis request failed');
    let attempts=0;
@@ -193,7 +221,7 @@ async function runStaticAnalysis(sha256, btn){
      const pj=await pr.json();
      if(!pr.ok)throw new Error(apiDetail(pj.detail)||'Static analysis polling failed');
      if(pj.status==='completed'||pj.status==='failed'){renderStaticDetail(sha256,pj); refreshStaticTable(); return}
-     const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`<div class="info-box"><b>Static analysis running</b><div class="small">${esc(pj.status||'running')} · ${esc(pj.filename||sha256.slice(0,12))}</div></div>`;
+     const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`<div class="info-box"><b>Analysing file…</b><div class="small">${esc(pj.status||'running')} · ${esc(pj.filename||sha256.slice(0,12))}</div></div>`;
      await new Promise(res=>setTimeout(res,1000));
    }
    throw new Error('Static analysis timed out');
@@ -209,30 +237,6 @@ async function refreshStaticTable(){
    if(!r.ok){host.innerHTML=`<div class="err">${esc(apiDetail(j.detail)||'Unable to load static analysis inventory')}</div>`; return}
    host.innerHTML=staticFilesTable(j.files||[]);
  }catch(e){host.innerHTML=`<div class="err">${esc(e.message)}</div>`}
-}
-function staticFilesTable(files){
- return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>Cached</th><th>VT</th><th>Static Status</th><th>Static Verdict</th><th>Action</th></tr>${(files||[]).map(f=>`<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub mono">${esc(shortHash(f.sha256))}</div></td><td>${esc(f.file_type||'-')}</td><td>${f.cached?'<span class="badge ok">yes</span>':`<span class="badge warn">${esc(f.cache_reason||'no')}</span>`}</td><td>${vtBadge(f.vt_verdict)}</td><td>${esc(f.static_status||'not_started')}</td><td>${staticVerdictBadge(f.static_verdict)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}</td><td>${f.cached?`<button onclick="runStaticAnalysis('${esc(f.sha256)}', this)">Disassemble &amp; Analyse</button>`:'<span class="small">Unavailable</span>'}</td></tr>`).join('')||'<tr><td colspan="7">No files in job inventory.</td></tr>'}</table></div>`;
-}
-function renderStaticDetail(sha256,report){
- const el=document.getElementById('staticDetail'); if(!el)return;
- const n=report.analyst_narrative||{}; const v=report.static_verdict||{}; const prof=report.profile||{}; const corr=report.correlation||{}; const typed=report.typed_analysis||{}; const deob=report.deobfuscation||{}; const fns=report.functions||[];
- const what=(n.what_it_does||[]).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No behavior summary available.</li>';
- const fnRows=fns.slice(0,20).map(fn=>`<tr><td>${esc(fn.name||'-')}</td><td>${esc((fn.logic_tags||fn.logic_summary||[]).join(', ')||'-')}</td><td><pre>${esc(fn.disassembly_preview||fn.snippet_preview||fn.decompilation_preview||'-')}</pre></td></tr>`).join('')||'<tr><td colspan="3">No function-level output for this file type.</td></tr>';
- const sigRows=(v.signals||[]).slice(0,20).map(s=>`<tr><td>${esc(s.category)}</td><td>${esc(s.label)}</td><td>${esc(s.weight)}</td><td>${esc(s.evidence)}</td></tr>`).join('')||'<tr><td colspan="4">No signals recorded.</td></tr>';
- const rec=(deob.recovered||[]).slice(0,10).map(x=>`<div class="iocitem"><span class="mono">${esc(x.method||'-')}</span><div class="small">${esc(x.decoded_preview||x.source_preview||'')}</div></div>`).join('')||'<div class="small">No de-obfuscation recoveries.</div>';
- el.innerHTML=`<div class="info-box" style="border-color:rgba(66,232,180,.35)"><b>${esc(n.headline||'What this file does')}</b><div class="small" style="margin-top:8px">${esc(n.assessment||'')}</div><ul style="margin:10px 0 0 18px;line-height:1.5">${what}</ul><div class="small" style="margin-top:10px;opacity:.85">${esc(n.who_should_read_this||'')}</div></div>
- <div class="cards"><div class="card"><div class="k">Static Verdict</div><div class="v ${verdictClass(v.verdict)}">${esc(v.verdict||report.status||'-')}</div><div class="small">Confidence ${esc(v.confidence??'-')}% · Score ${esc(v.score??'-')}</div></div><div class="card"><div class="k">File Type</div><div class="v">${esc(typed.language||prof.category||'-')}</div><div class="small">${esc(report.filename||'-')} · ${esc(prof.extension||'-')}</div></div><div class="card"><div class="k">Functions</div><div class="v">${esc(corr.function_count||fns.length||0)}</div></div><div class="card"><div class="k">Recovered Artifacts</div><div class="v">${esc(corr.recovered_artifacts||0)}</div></div></div>
- <details class="rel"><summary><b>Technical details</b> <span class="badge">optional</span></summary>
- <div class="info-box"><b>Rationale</b><div class="small">${(v.rationale||[]).map(x=>esc(x)).join('<br>')||esc(v.note||'No rationale available.')}</div></div>
- <h3 class="subhead">Suspicious strings</h3>${listBlock('Indicators in file', (report.universal?.suspicious_strings||[]).slice(0,8))}
- <h3 class="subhead">De-obfuscation / Decoding</h3>${rec}
- <h3 class="subhead">Evidence Signals</h3><div class="tablewrap"><table class="filetable"><tr><th>Category</th><th>Label</th><th>Weight</th><th>Evidence</th></tr>${sigRows}</table></div>
- <h3 class="subhead">Function / Method Logic</h3><div class="tablewrap"><table class="filetable"><tr><th>Name</th><th>Logic Tags</th><th>Preview</th></tr>${fnRows}</table></div>
- <h3 class="subhead">Typed Analysis Summary</h3><pre>${esc(JSON.stringify({logic_summary:typed.logic_summary||[], language:typed.language, format:typed.format, pattern_matches:(typed.pattern_matches||[]).slice(0,10)}, null, 2))}</pre>
- </details>`;
-}
-function staticAnalysisHtml(){
- return `<div class="info-box"><b>Universal Static Analysis</b><div class="small">On-demand reverse-engineering for every file in the job inventory — PE/ELF, scripts, documents, archives, images, configs, and unknown binaries. Static verdict is independent from VirusTotal.</div></div><div id="staticTableHost"><div class="small">Load a completed job to enumerate analyzable files…</div></div><h3 class="subhead">Selected File Report</h3><div id="staticDetail" class="detailpane">Run static analysis on a cached file to view disassembly, de-obfuscation, function logic, correlation, and static verdict.</div>`;
 }
 
 function listBlock(title, items, cls=''){

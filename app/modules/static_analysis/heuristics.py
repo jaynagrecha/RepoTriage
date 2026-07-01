@@ -10,10 +10,23 @@ def collect_signals(report: dict[str, Any]) -> list[dict[str, Any]]:
         signals.append({'category': category, 'label': label, 'weight': weight, 'evidence': evidence[:500]})
 
     universal = report.get('universal') or {}
+    typed = report.get('typed_analysis') or {}
+    suspicious = universal.get('suspicious_strings') or []
+    suspicious_blob = ' '.join(suspicious).lower()
+    raw_text = suspicious_blob
+
+    # High-confidence malware combinations (avoid weak "inconclusive" on obvious droppers).
+    if 'wscript' in suspicious_blob and 'activexobject' in suspicious_blob:
+        add('malware', 'windows_script_dropper', 45, 'WScript + ActiveXObject — classic script-based dropper/downloader pattern')
+    if '_0x' in suspicious_blob and ('wscript' in suspicious_blob or 'activexobject' in suspicious_blob):
+        add('malware', 'obfuscated_script_dropper', 40, 'Obfuscated script (_0x…) with Windows Script Host execution primitives')
+    if 'invoke-expression' in suspicious_blob or 'downloadstring' in suspicious_blob or 'iex' in suspicious_blob.split():
+        add('malware', 'powershell_downloader', 42, 'PowerShell download/execute pattern detected')
+
     if universal.get('entropy', 0) >= 7.2:
         add('packing', 'high_entropy', 15, f"Entropy {universal.get('entropy')}")
-    if universal.get('suspicious_strings'):
-        add('behavior', 'suspicious_strings', 20, '; '.join(universal['suspicious_strings'][:5]))
+    if suspicious:
+        add('behavior', 'suspicious_strings', 20, '; '.join(suspicious[:5]))
     iocs = universal.get('iocs') or {}
     if iocs.get('urls') or iocs.get('ips') or iocs.get('discord_webhooks'):
         add('network', 'embedded_iocs', 18, f"URLs={len(iocs.get('urls') or [])}, IPs={len(iocs.get('ips') or [])}")
@@ -22,7 +35,6 @@ def collect_signals(report: dict[str, Any]) -> list[dict[str, Any]]:
     if (deob.get('attempts') or 0) > 0 or deob.get('xor_candidates'):
         add('obfuscation', 'decoded_hidden_content', 22, f"Recovered {deob.get('attempts', 0)} decoded artifact(s)")
 
-    typed = report.get('typed_analysis') or {}
     for summary in typed.get('logic_summary') or []:
         add('typed', 'logic_summary', 12, summary)
     if typed.get('macros_detected'):

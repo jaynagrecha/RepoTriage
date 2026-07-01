@@ -82,6 +82,8 @@ def detect_script_language(path: Path, text: str) -> str:
             return 'shell'
         if 'pwsh' in shebang or 'powershell' in shebang:
             return 'powershell'
+    if 'function' in text and 'WScript' in text and ('_0x' in text or 'ActiveXObject' in text or 'eval(' in text):
+        return 'javascript'
     if 'function' in text and 'WScript' in text:
         return 'vbscript'
     if 'Invoke-Expression' in text or '$' in text:
