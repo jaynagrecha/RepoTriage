@@ -4,6 +4,14 @@ GitHub Payload Intelligence Platform — public job-based GitHub file URL analys
 
 ## Changelog
 
+### v2.2B.3 — Mobile layout and touch support
+
+- Responsive breakpoints at 1000px, 720px, and 420px for phones and small tablets.
+- Full-width Analyze button, single-column summary cards, and stacked tab groups on mobile.
+- Tables keep horizontal scroll instead of breaking the page layout.
+- Infrastructure graph supports touch pan and tap-to-select on mobile.
+- Larger tap targets (44px minimum) for tabs and controls.
+
 ### v2.2B.2 — Infrastructure graph UX
 
 - Cleaner radial layout with collision spacing so nodes and labels no longer overlap.

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>RepoTriage</title>
   <style>
     :root{
@@ -15,10 +15,9 @@
     .panel{background:linear-gradient(180deg,rgba(13,27,36,.96),rgba(8,17,23,.96));border:1px solid var(--border);border-radius:20px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,.35);margin-bottom:18px}.inputrow{display:grid;grid-template-columns:1fr auto;gap:12px}input,textarea,button{font:inherit}input{width:100%;background:#061019;color:var(--text);border:1px solid var(--border);border-radius:14px;padding:14px 16px;outline:none}button{background:linear-gradient(135deg,var(--accent),#39b9ff);color:#001016;border:none;border-radius:14px;padding:13px 18px;font-weight:800;cursor:pointer}.small{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.45}
     .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.card{background:#081722;border:1px solid var(--border);border-radius:16px;padding:14px;min-width:0}.card .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.card .v{font-size:22px;font-weight:800;margin-top:6px;overflow-wrap:anywhere}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.tab{background:#07151d;border:1px solid var(--border);color:var(--muted);padding:9px 12px;border-radius:12px;cursor:pointer}.tab.active{color:#001016;background:var(--accent);border-color:var(--accent)}.tabbody{display:none}.tabbody.active{display:block}pre{white-space:pre-wrap;background:#050d13;border:1px solid var(--border);padding:14px;border-radius:14px;overflow:auto}.ok{color:var(--accent)}.pending{color:var(--warn)}.err{color:var(--bad)}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.status{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.step{border:1px solid var(--border);border-radius:999px;padding:7px 10px;color:var(--muted)}.step.done{color:var(--accent);border-color:#1f8f72}.step.todo{color:var(--warn)}
     .badge{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;white-space:nowrap}.badge.bad{color:var(--bad);border-color:#804040;background:rgba(255,98,98,.08)}.badge.warn{color:var(--warn);border-color:#806d2d;background:rgba(255,209,102,.08)}.badge.ok{color:var(--accent);border-color:#1f8f72;background:rgba(66,232,180,.08)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.subhead{margin:18px 0 8px;color:var(--accent)}
-    .tablewrap{width:100%;overflow:auto;border:1px solid var(--border);border-radius:14px;background:#061018}.filetable{width:100%;border-collapse:separate;border-spacing:0;min-width:980px}.filetable td,.filetable th{border-bottom:1px solid var(--border);padding:10px 12px;text-align:left;vertical-align:top}.filetable th{color:var(--muted);font-size:12px;text-transform:uppercase;background:#081722;position:sticky;top:0;z-index:1}.filetable tr:last-child td{border-bottom:0}.file-path{font-weight:700;color:#e9f6fb;max-width:420px;word-break:break-word}.file-sub{font-size:12px;color:var(--muted);margin-top:4px}.hashcell{max-width:280px}.hashline{display:flex;gap:7px;margin:3px 0}.hashlabel{color:var(--muted);width:46px;flex:0 0 46px}.hashval{word-break:break-all}.group{border:1px solid var(--border);background:rgba(8,23,34,.75);border-radius:18px;margin:14px 0;overflow:hidden}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:linear-gradient(90deg,#0b2430,#07151d);border-bottom:1px solid var(--border)}.group-title{font-weight:900;font-size:16px}.group-meta{color:var(--muted);font-size:13px}.root-card{display:grid;grid-template-columns:1.6fr .9fr .8fr .8fr;gap:12px;align-items:start}.info-box{background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px;min-width:0}.info-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.info-value{font-weight:800;margin-top:6px;word-break:break-word}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 12px}.filter{max-width:360px;padding:10px 12px}.muted{color:var(--muted)}
-    @media(max-width:1000px){.cards{grid-template-columns:1fr 1fr}.inputrow,.grid2,.root-card{grid-template-columns:1fr}.hero{display:block}.brand h1{font-size:36px}}
+    .tablewrap{width:100%;overflow:auto;border:1px solid var(--border);border-radius:14px;background:#061018}.filetable{width:100%;border-collapse:separate;border-spacing:0;min-width:980px}.filetable td,.filetable th{border-bottom:1px solid var(--border);padding:10px 12px;text-align:left;vertical-align:top}.filetable th{color:var(--muted);font-size:12px;text-transform:uppercase;background:#081722;position:sticky;top:0;z-index:1}.filetable tr:last-child td{border-bottom:0}.file-path{font-weight:700;color:#e9f6fb;max-width:420px;word-break:break-word}.file-sub{font-size:12px;color:var(--muted);margin-top:4px}.hashcell{max-width:280px}.hashline{display:flex;gap:7px;margin:3px 0}.hashlabel{color:var(--muted);width:46px;flex:0 0 46px}.hashval{word-break:break-all}.group{border:1px solid var(--border);background:rgba(8,23,34,.75);border-radius:18px;margin:14px 0;overflow:hidden}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:linear-gradient(90deg,#0b2430,#07151d);border-bottom:1px solid var(--border)}.group-title{font-weight:900;font-size:16px}.group-meta{color:var(--muted);font-size:13px}.root-card{display:grid;grid-template-columns:1.6fr .9fr .8fr .8fr;gap:12px;align-items:start}.info-box{background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px;min-width:0}.info-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.info-value{font-weight:800;margin-top:6px;word-break:break-word}    .toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 12px;flex-wrap:wrap}.filter{max-width:360px;padding:10px 12px;width:100%}.muted{color:var(--muted)}
   details.rel{margin:8px 0;border:1px solid var(--border);border-radius:12px;padding:8px;background:#061018}details.rel summary{cursor:pointer;color:var(--accent)}.graphwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px}.nodebox{border:1px solid var(--border);background:#061018;border-radius:12px;padding:10px;margin:6px 0}.nodebox.sample{border-color:#42e8b4}.nodebox.family{border-color:#ffd166}.nodebox.infrastructure{border-color:#ff6262}.edge{font-size:12px;color:var(--muted);margin-left:14px}.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.btnrow button{padding:10px 12px}
-    .graphcanvas{position:relative;min-height:680px;background:radial-gradient(circle at center,#0b2632 0,#061018 70%);border:1px solid var(--border);border-radius:18px;overflow:hidden;touch-action:none}
+    .graphcanvas{position:relative;min-height:680px;background:radial-gradient(circle at center,#0b2632 0,#061018 70%);border:1px solid var(--border);border-radius:18px;overflow:hidden;touch-action:pan-x pan-y pinch-zoom}
     .graphcanvas.panning{cursor:grabbing}
     .graphcanvas:not(.panning) .graphsvg{cursor:grab}
     .graphsvg{width:100%;height:680px;display:block;user-select:none}
@@ -49,11 +48,56 @@
     .tab-section{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .tab-section-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:0 4px}
     button:disabled{opacity:.55;cursor:not-allowed}
+    html{-webkit-text-size-adjust:100%}
+    body{overflow-x:hidden}
+    .tablewrap{-webkit-overflow-scrolling:touch}
+    @media(max-width:1000px){
+      .cards{grid-template-columns:repeat(2,1fr)}
+      .inputrow,.grid2,.root-card{grid-template-columns:1fr}
+      .hero{display:block}
+      .brand h1{font-size:36px}
+      .toolbar{flex-direction:column;align-items:stretch}
+      .filter{max-width:none;width:100%}
+      .graphwrap{grid-template-columns:1fr}
+    }
+    @media(max-width:720px){
+      .wrap{padding:16px}
+      .panel{padding:14px;border-radius:16px}
+      .brand h1{font-size:30px;letter-spacing:-1px}
+      .brand p{font-size:13px;line-height:1.5}
+      .pill{margin-top:12px;display:inline-flex}
+      .inputrow{grid-template-columns:1fr}
+      .inputrow button{width:100%;min-height:48px}
+      .cards{grid-template-columns:1fr}
+      .card .v{font-size:20px}
+      .tab{padding:10px 14px;min-height:44px;font-size:13px}
+      .tab-section{display:block;width:100%}
+      .tab-section-label{display:block;margin:0 0 6px 2px}
+      .tab-sep{display:none}
+      .group-head{flex-direction:column;align-items:flex-start}
+      .group-meta{margin-top:4px}
+      .btnrow button,.graph-controls button{min-height:44px;min-width:44px}
+      .graphcanvas{min-height:460px}
+      .graphsvg{height:460px}
+      .graph-controls{top:8px;right:8px;padding:4px 6px}
+      .graph-note{font-size:12px}
+      .step{font-size:12px;padding:6px 9px}
+      .usagebar{font-size:12px}
+      .detailpane pre{max-height:180px;font-size:11px}
+    }
+    @media(max-width:420px){
+      .wrap{padding:12px}
+      .brand h1{font-size:26px}
+      .hero .pill{font-size:12px;padding:6px 10px}
+      input{padding:12px 14px;font-size:16px}
+      .subhead{font-size:15px}
+      .legend span{font-size:11px}
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.2 Graph UX</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.3 Mobile</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub file URL: https://github.com/user/repo/blob/main/payload.zip"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub file URL for server-side analysis. The browser receives metadata and CTI results only — never sample bytes. Set KEEP_QUARANTINE=true on the backend to retain samples for local debugging.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -327,17 +371,25 @@ function initGraphCanvas(root){
   const svg=root.querySelector('.graphsvg');
   const vp=svg?.querySelector('.graph-viewport');
   if(!svg||!vp)return;
-  let scale=1,tx=0,ty=0,panning=false,px=0,py=0;
+  let scale=1,tx=0,ty=0,panning=false,px=0,py=0,panMoved=false,touchId=null;
   const zoomLabel=root.querySelector('.graph-zoom-label');
   function applyTransform(){vp.setAttribute('transform',`translate(${tx} ${ty}) scale(${scale})`); if(zoomLabel)zoomLabel.textContent=Math.round(scale*100)+'%';}
   root.querySelector('.graph-zoom-in')?.addEventListener('click',()=>{scale=Math.min(2.5,scale*1.15);applyTransform();});
   root.querySelector('.graph-zoom-out')?.addEventListener('click',()=>{scale=Math.max(0.5,scale/1.15);applyTransform();});
   root.querySelector('.graph-zoom-reset')?.addEventListener('click',()=>{scale=1;tx=0;ty=0;applyTransform();});
   svg.addEventListener('wheel',(e)=>{e.preventDefault();scale=Math.max(0.5,Math.min(2.5,scale*(e.deltaY>0?0.92:1.08)));applyTransform();},{passive:false});
-  svg.addEventListener('mousedown',(e)=>{if(e.target.closest('.g-node'))return; panning=true; px=e.clientX; py=e.clientY; root.classList.add('panning');});
-  window.addEventListener('mouseup',()=>{panning=false; root.classList.remove('panning');});
-  window.addEventListener('mousemove',(e)=>{if(!panning)return; tx+=(e.clientX-px)/scale; ty+=(e.clientY-py)/scale; px=e.clientX; py=e.clientY; applyTransform();});
-  vp.addEventListener('click',(e)=>{const g=e.target.closest('.g-node'); if(!g)return; e.stopPropagation(); selectGraphNode(Number(g.getAttribute('data-node-idx')),root);});
+  function startPan(x,y){panning=true;panMoved=false;px=x;py=y;root.classList.add('panning');}
+  function movePan(x,y){if(!panning)return; if(Math.abs(x-px)+Math.abs(y-py)>4)panMoved=true; tx+=(x-px)/scale; ty+=(y-py)/scale; px=x; py=y; applyTransform();}
+  function endPan(){panning=false;touchId=null;root.classList.remove('panning');}
+  svg.addEventListener('mousedown',(e)=>{if(e.target.closest('.g-node'))return; startPan(e.clientX,e.clientY);});
+  window.addEventListener('mouseup',endPan);
+  window.addEventListener('mousemove',(e)=>{movePan(e.clientX,e.clientY);});
+  svg.addEventListener('touchstart',(e)=>{if(e.target.closest('.g-node'))return; if(e.touches.length===1){touchId=e.touches[0].identifier; startPan(e.touches[0].clientX,e.touches[0].clientY);}},{passive:true});
+  svg.addEventListener('touchmove',(e)=>{if(!panning||touchId==null)return; const t=[...e.touches].find(x=>x.identifier===touchId); if(!t)return; e.preventDefault(); movePan(t.clientX,t.clientY);},{passive:false});
+  svg.addEventListener('touchend',()=>{endPan();});
+  function activateNode(g){if(!g||panMoved)return; selectGraphNode(Number(g.getAttribute('data-node-idx')),root);}
+  vp.addEventListener('click',(e)=>{const g=e.target.closest('.g-node'); if(!g)return; e.stopPropagation(); activateNode(g);});
+  vp.addEventListener('touchend',(e)=>{const g=e.target.closest('.g-node'); if(!g)return; e.preventDefault(); activateNode(g);});
   applyTransform();
 }
 function selectGraphNode(idx,root){
