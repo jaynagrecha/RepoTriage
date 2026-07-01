@@ -4,6 +4,14 @@ GitHub Payload Intelligence Platform — public job-based GitHub file URL analys
 
 ## Changelog
 
+### v2.2B.2 — Infrastructure graph UX
+
+- Cleaner radial layout with collision spacing so nodes and labels no longer overlap.
+- Removed cluttered edge labels from the canvas; relationships show on node click and in the table.
+- Pan (drag background), zoom (scroll wheel + controls), and reset view.
+- Node click highlights connected edges and dims unrelated nodes.
+- Labels moved below nodes for readability; curved edges reduce visual crossing.
+
 ### v2.2B.1 — Security, reliability, and UX hardening
 
 **Security**

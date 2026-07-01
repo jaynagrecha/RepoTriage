@@ -18,9 +18,28 @@
     .tablewrap{width:100%;overflow:auto;border:1px solid var(--border);border-radius:14px;background:#061018}.filetable{width:100%;border-collapse:separate;border-spacing:0;min-width:980px}.filetable td,.filetable th{border-bottom:1px solid var(--border);padding:10px 12px;text-align:left;vertical-align:top}.filetable th{color:var(--muted);font-size:12px;text-transform:uppercase;background:#081722;position:sticky;top:0;z-index:1}.filetable tr:last-child td{border-bottom:0}.file-path{font-weight:700;color:#e9f6fb;max-width:420px;word-break:break-word}.file-sub{font-size:12px;color:var(--muted);margin-top:4px}.hashcell{max-width:280px}.hashline{display:flex;gap:7px;margin:3px 0}.hashlabel{color:var(--muted);width:46px;flex:0 0 46px}.hashval{word-break:break-all}.group{border:1px solid var(--border);background:rgba(8,23,34,.75);border-radius:18px;margin:14px 0;overflow:hidden}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:linear-gradient(90deg,#0b2430,#07151d);border-bottom:1px solid var(--border)}.group-title{font-weight:900;font-size:16px}.group-meta{color:var(--muted);font-size:13px}.root-card{display:grid;grid-template-columns:1.6fr .9fr .8fr .8fr;gap:12px;align-items:start}.info-box{background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px;min-width:0}.info-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.info-value{font-weight:800;margin-top:6px;word-break:break-word}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 12px}.filter{max-width:360px;padding:10px 12px}.muted{color:var(--muted)}
     @media(max-width:1000px){.cards{grid-template-columns:1fr 1fr}.inputrow,.grid2,.root-card{grid-template-columns:1fr}.hero{display:block}.brand h1{font-size:36px}}
   details.rel{margin:8px 0;border:1px solid var(--border);border-radius:12px;padding:8px;background:#061018}details.rel summary{cursor:pointer;color:var(--accent)}.graphwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px}.nodebox{border:1px solid var(--border);background:#061018;border-radius:12px;padding:10px;margin:6px 0}.nodebox.sample{border-color:#42e8b4}.nodebox.family{border-color:#ffd166}.nodebox.infrastructure{border-color:#ff6262}.edge{font-size:12px;color:var(--muted);margin-left:14px}.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.btnrow button{padding:10px 12px}
-    .graphcanvas{position:relative;min-height:620px;background:radial-gradient(circle at center,#0b2632 0,#061018 70%);border:1px solid var(--border);border-radius:18px;overflow:hidden}
-    .graphsvg{width:100%;height:620px;display:block}
-    .g-node{cursor:pointer;filter:drop-shadow(0 8px 16px rgba(0,0,0,.35))}.g-node circle{stroke-width:2}.g-label{font-size:12px;font-weight:800;fill:#e9f6fb;paint-order:stroke;stroke:#061018;stroke-width:4px;stroke-linejoin:round}.g-sub{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.g-edge{stroke:#2b5a6d;stroke-width:1.6;opacity:.85}.g-edge-label{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:11px;height:11px;border-radius:50%;display:inline-block}.detailpane{margin-top:12px;background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px}    .graph-note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 12px}
+    .graphcanvas{position:relative;min-height:680px;background:radial-gradient(circle at center,#0b2632 0,#061018 70%);border:1px solid var(--border);border-radius:18px;overflow:hidden;touch-action:none}
+    .graphcanvas.panning{cursor:grabbing}
+    .graphcanvas:not(.panning) .graphsvg{cursor:grab}
+    .graphsvg{width:100%;height:680px;display:block;user-select:none}
+    .graph-controls{position:absolute;top:12px;right:12px;z-index:2;display:flex;gap:6px;align-items:center;background:rgba(6,16,24,.88);border:1px solid var(--border);border-radius:12px;padding:6px 8px}
+    .graph-controls button{background:#0b2430;color:var(--text);border:1px solid var(--border);border-radius:8px;width:30px;height:30px;padding:0;font-weight:800;cursor:pointer;line-height:1}
+    .graph-controls button:hover{border-color:var(--accent);color:var(--accent)}
+    .graph-zoom-label{font-size:11px;color:var(--muted);min-width:38px;text-align:center}
+    .g-node{cursor:pointer;transition:opacity .18s ease}
+    .g-node circle{stroke-width:2.5;transition:stroke-width .18s ease,filter .18s ease}
+    .g-node:hover circle,.g-node.selected circle{stroke-width:3.5;filter:drop-shadow(0 0 10px rgba(66,232,180,.35))}
+    .g-node.dimmed{opacity:.28}
+    .g-label{font-size:11px;font-weight:800;fill:#e9f6fb;paint-order:stroke;stroke:#061018;stroke-width:5px;stroke-linejoin:round;pointer-events:none}
+    .g-sub{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:4px;pointer-events:none}
+    .g-edge{fill:none;stroke:#2b5a6d;stroke-width:1.4;opacity:.45;transition:opacity .18s ease,stroke .18s ease}
+    .g-edge.highlight{stroke:#42e8b4;opacity:.95;stroke-width:2}
+    .graph-edges.dimmed .g-edge:not(.highlight){opacity:.12}
+    .legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+    .legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+    .dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+    .detailpane{margin-top:12px;background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px;min-height:80px}
+    .graph-note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 12px}
     .iocbox{border:1px solid var(--border);background:#061018;border-radius:14px;padding:12px;margin:8px 0}
     .iocitem{padding:8px 0;border-bottom:1px solid var(--border)}
     .iocitem:last-child{border-bottom:0}
@@ -34,7 +53,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.1</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.2 Graph UX</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub file URL: https://github.com/user/repo/blob/main/payload.zip"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub file URL for server-side analysis. The browser receives metadata and CTI results only — never sample bytes. Set KEEP_QUARANTINE=true on the backend to retain samples for local debugging.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -101,7 +120,8 @@ async function analyze(){
 function render(j){document.getElementById('results').style.display='block';const f=j.root_file||{}, fs=j.file_stats||{}, c=j.cti_dashboard||{}, ca=j.campaign_analysis||{}, ta=j.threat_actor_assessment||{};document.getElementById('cards').innerHTML=`<div class="card"><div class="k">Overall Risk</div><div class="v ${c.risk==='Critical'||c.risk==='High'?'err':(c.risk==='Medium'?'pending':'ok')}">${esc(c.risk||j.vt?.verdict||'unknown')}</div></div><div class="card"><div class="k">Primary Family</div><div class="v">${esc(c.primary_family||j.family?.name||'Unknown')}</div></div><div class="card"><div class="k">Campaign</div><div class="v">${esc(ca.candidate||'Unknown')}</div><div class="small">${esc(ca.confidence_band||'Low')} · ${esc(ca.confidence_score||0)}%</div></div><div class="card"><div class="k">Threat Actor</div><div class="v">${esc(ta.primary_assessment||'Unknown')}</div><div class="small">${esc(ta.confidence_band||'Low')} · ${esc(ta.confidence_score||0)}%</div></div><div class="card"><div class="k">Malicious Files</div><div class="v ${fs.malicious?'err':''}">${esc(fs.malicious||0)}</div><div class="small">${esc(fs.total_listed||1)} total listed</div></div>`
 const tabs=document.getElementById('tabs');
 tabs.innerHTML=tabGroups.map(g=>`<div class="tab-section"><span class="tab-section-label">${esc(g.label)}</span>${g.tabs.map(t=>{const i=tabNames.indexOf(t); return `<button class="tab ${i==0?'active':''}" data-tab="${i}" onclick="showTab(${i})">${esc(t)}</button>`}).join('')}<span class="tab-sep"></span></div>`).join('');
-document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');}
+document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');
+queueMicrotask(()=>{const gc=document.getElementById('infraGraphCanvas'); if(gc)initGraphCanvas(gc);});}
 function showTab(i){document.querySelectorAll('.tab').forEach((e,n)=>e.classList.toggle('active',n===i));document.querySelectorAll('.tabbody').forEach((e,n)=>e.classList.toggle('active',n===i))}
 function displayName(x){return x.original_name || x.filename || x.path || 'file'}
 function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) sub.push(x.filename); if(x.stored_name) sub.push('stored as: '+x.stored_name); if(x.blocked_by_local_av) sub.push('local AV blocked/quarantined storage; hash captured in-memory'); if(x.analysis_note) sub.push(x.analysis_note); return `<tr><td><div class="file-path">${esc(displayName(x))}</div><div class="file-sub">${esc(sub.join(' · '))}</div></td><td>${esc(x.file_type||'-')}</td><td>${fmtBytes(x.size_bytes)}</td><td class="hashcell mono"><div class="hashline"><span class="hashlabel">MD5</span><span class="hashval" title="${fullHash(x.md5)}">${esc(shortHash(x.md5))}</span></div><div class="hashline"><span class="hashlabel">SHA1</span><span class="hashval" title="${fullHash(x.sha1)}">${esc(shortHash(x.sha1))}</span></div><div class="hashline"><span class="hashlabel">SHA256</span><span class="hashval" title="${fullHash(x.sha256)}">${esc(shortHash(x.sha256))}</span></div></td><td>${vtBadge(x.vt_verdict)}<div class="file-sub">${Number(x.vt_malicious||0)} malicious / ${Number(x.vt_suspicious||0)} suspicious</div></td><td>${x.vt_link?`<a href="${esc(x.vt_link)}" target="_blank">VT Report</a>`:'-'}</td></tr>`}
@@ -231,29 +251,141 @@ function graphColor(type, sev){
   return '#8da6b3';
 }
 function compactLabel(s,n=24){s=String(s||''); return s.length>n?s.slice(0,n-1)+'…':s}
-function buildGraphLayout(nodes, edges){
-  const w=1200,h=620,cx=w/2,cy=h/2; const arranged=[]; const byType={};
-  nodes.forEach(n=>(byType[n.type] ||= []).push(n));
-  const sample=(byType.sample||[])[0]||nodes[0]; if(sample) arranged.push({...sample,x:cx,y:cy,r:34});
-  const rings=[
-    ['file',170],['family',250],['domain',330],['url',390],['ip',440],['infrastructure',500],['ioc',460]
-  ];
-  rings.forEach(([typ,rad],ri)=>{const arr=(byType[typ]||[]).slice(0,18); const step=(Math.PI*2)/(arr.length||1); arr.forEach((n,i)=>{const ang=step*i-(Math.PI/2)+(ri*.22); arranged.push({...n,x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad,r:typ==='family'?26:22});});});
-  const map={}; arranged.forEach(n=>map[n.id]=n); return {nodes:arranged,edges,map,w,h};
+function nodeSubtitle(n){
+  if(!n)return '';
+  if(n.type==='file')return String(n.meta?.verdict||'file');
+  if(n.type==='sample')return 'root sample';
+  if(n.type==='family')return 'malware family';
+  return String(n.type||'node');
+}
+function buildGraphLayout(nodes){
+  const w=1200,h=720,cx=w/2,cy=h/2;
+  const sample=nodes.find(n=>n.type==='sample')||nodes[0];
+  const sampleId=sample?.id;
+  const arranged=[];
+  if(sample) arranged.push({...sample,x:cx,y:cy,r:42,fixed:true});
+  const typeOrder=['file','family','domain','url','ip','infrastructure','ioc'];
+  const baseRadii={file:165,family:255,domain:315,url:355,ip:395,infrastructure:435,ioc:415};
+  const nodeRadii={file:26,family:24,domain:22,url:22,ip:22,infrastructure:22,ioc:20};
+  typeOrder.forEach((typ,ringIdx)=>{
+    const group=nodes.filter(n=>n.id!==sampleId&&n.type===typ).slice(0,24);
+    if(!group.length)return;
+    const radius=baseRadii[typ]||320;
+    const nr=nodeRadii[typ]||22;
+    const step=(Math.PI*2)/group.length;
+    const offset=-Math.PI/2+(ringIdx*Math.PI)/8;
+    group.forEach((n,i)=>{
+      const ang=offset+step*i;
+      arranged.push({...n,x:cx+Math.cos(ang)*radius,y:cy+Math.sin(ang)*radius,r:nr});
+    });
+  });
+  nodes.filter(n=>n.id!==sampleId&&!typeOrder.includes(n.type)).forEach((n,i)=>{
+    const ang=-Math.PI/2+(Math.PI*2*i)/Math.max(3,1);
+    arranged.push({...n,x:cx+Math.cos(ang)*470,y:cy+Math.sin(ang)*470,r:20});
+  });
+  for(let iter=0;iter<60;iter++){
+    for(let i=0;i<arranged.length;i++){
+      for(let j=i+1;j<arranged.length;j++){
+        const a=arranged[i],b=arranged[j];
+        const dx=b.x-a.x,dy=b.y-a.y;
+        const dist=Math.hypot(dx,dy)||0.001;
+        const minDist=a.r+b.r+54;
+        if(dist<minDist){
+          const push=(minDist-dist)*0.5;
+          const ux=dx/dist,uy=dy/dist;
+          if(!a.fixed){a.x-=ux*push;a.y-=uy*push;}
+          if(!b.fixed){b.x+=ux*push;b.y+=uy*push;}
+        }
+      }
+    }
+    arranged.forEach(n=>{
+      if(n.fixed)return;
+      const dx=cx-n.x,dy=cy-n.y;
+      const dist=Math.hypot(dx,dy)||1;
+      const target=baseRadii[n.type]||340;
+      const pull=(dist-target)*0.08;
+      n.x+=(dx/dist)*pull;
+      n.y+=(dy/dist)*pull;
+      n.x=Math.max(n.r+28,Math.min(w-n.r-28,n.x));
+      n.y=Math.max(n.r+44,Math.min(h-n.r-44,n.y));
+    });
+  }
+  const map={}; arranged.forEach(n=>{map[n.id]=n;});
+  return {nodes:arranged,map,w,h,cx,cy};
+}
+function graphEdgePath(a,b,cx,cy){
+  const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+  const dx=mx-cx,dy=my-cy;
+  const len=Math.hypot(dx,dy)||1;
+  const bow=22;
+  const qx=mx+(dx/len)*bow,qy=my+(dy/len)*bow;
+  return `M ${a.x} ${a.y} Q ${qx} ${qy} ${b.x} ${b.y}`;
+}
+function initGraphCanvas(root){
+  if(!root||root.dataset.wired==='1')return;
+  root.dataset.wired='1';
+  const svg=root.querySelector('.graphsvg');
+  const vp=svg?.querySelector('.graph-viewport');
+  if(!svg||!vp)return;
+  let scale=1,tx=0,ty=0,panning=false,px=0,py=0;
+  const zoomLabel=root.querySelector('.graph-zoom-label');
+  function applyTransform(){vp.setAttribute('transform',`translate(${tx} ${ty}) scale(${scale})`); if(zoomLabel)zoomLabel.textContent=Math.round(scale*100)+'%';}
+  root.querySelector('.graph-zoom-in')?.addEventListener('click',()=>{scale=Math.min(2.5,scale*1.15);applyTransform();});
+  root.querySelector('.graph-zoom-out')?.addEventListener('click',()=>{scale=Math.max(0.5,scale/1.15);applyTransform();});
+  root.querySelector('.graph-zoom-reset')?.addEventListener('click',()=>{scale=1;tx=0;ty=0;applyTransform();});
+  svg.addEventListener('wheel',(e)=>{e.preventDefault();scale=Math.max(0.5,Math.min(2.5,scale*(e.deltaY>0?0.92:1.08)));applyTransform();},{passive:false});
+  svg.addEventListener('mousedown',(e)=>{if(e.target.closest('.g-node'))return; panning=true; px=e.clientX; py=e.clientY; root.classList.add('panning');});
+  window.addEventListener('mouseup',()=>{panning=false; root.classList.remove('panning');});
+  window.addEventListener('mousemove',(e)=>{if(!panning)return; tx+=(e.clientX-px)/scale; ty+=(e.clientY-py)/scale; px=e.clientX; py=e.clientY; applyTransform();});
+  vp.addEventListener('click',(e)=>{const g=e.target.closest('.g-node'); if(!g)return; e.stopPropagation(); selectGraphNode(Number(g.getAttribute('data-node-idx')),root);});
+  applyTransform();
+}
+function selectGraphNode(idx,root){
+  const n=(window.__graphNodes||{})[idx];
+  if(!n)return;
+  root=root||document.getElementById('infraGraphCanvas');
+  root?.querySelectorAll('.g-node').forEach(el=>{
+    const on=el.getAttribute('data-node-idx')===String(idx);
+    el.classList.toggle('selected',on);
+    el.classList.toggle('dimmed',!on);
+  });
+  const edgeLayer=root?.querySelector('.graph-edges');
+  edgeLayer?.classList.add('dimmed');
+  root?.querySelectorAll('.g-edge').forEach(el=>{
+    const from=el.getAttribute('data-from'),to=el.getAttribute('data-to');
+    const hit=from===n.id||to===n.id;
+    el.classList.toggle('highlight',hit);
+  });
+  const edges=(window.__graphEdges||[]).filter(e=>e.from===n.id||e.to===n.id);
+  const rel=edges.slice(0,10).map(e=>`<div class="small">• ${esc(e.label)} → <span class="mono">${esc(e.to===n.id?compactLabel(e.from,28):compactLabel(e.to,28))}</span></div>`).join('')||'<div class="small">No direct edges listed.</div>';
+  const pane=document.getElementById('graphDetail');
+  if(!pane)return;
+  pane.innerHTML=`<b>${esc(n.label)}</b><div class="small">Type: ${esc(n.type)} · ${esc(nodeSubtitle(n))}</div><div style="margin-top:10px"><b class="small">Relationships</b>${rel}</div><pre style="margin-top:10px;max-height:240px">${esc(JSON.stringify(n.meta||{},null,2))}</pre>`;
 }
 function infraGraphHtml(j){
-  const g=j.infrastructure_graph||{nodes:[],edges:[]}; const nodes=g.nodes||[], edges=g.edges||[]; const layout=buildGraphLayout(nodes,edges); const edgeSvg=edges.slice(0,280).map(e=>{const a=layout.map[e.from],b=layout.map[e.to]; if(!a||!b)return ''; const mx=(a.x+b.x)/2,my=(a.y+b.y)/2; return `<line class="g-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line><text class="g-edge-label" x="${mx}" y="${my}">${esc(compactLabel(e.label,18))}</text>`}).join('');
-  window.__graphNodes={}; layout.nodes.forEach((n,i)=>{window.__graphNodes[i]=n});
+  const g=j.infrastructure_graph||{nodes:[],edges:[]};
+  const nodes=g.nodes||[], edges=g.edges||[];
+  window.__graphEdges=edges;
+  const layout=buildGraphLayout(nodes);
+  const edgeSvg=edges.slice(0,280).map(e=>{
+    const a=layout.map[e.from],b=layout.map[e.to];
+    if(!a||!b)return '';
+    return `<path class="g-edge" data-from="${esc(e.from)}" data-to="${esc(e.to)}" d="${graphEdgePath(a,b,layout.cx,layout.cy)}"></path>`;
+  }).join('');
+  window.__graphNodes={};
+  layout.nodes.forEach((n,i)=>{window.__graphNodes[i]=n;});
+  const nodeSvg=layout.nodes.map((n,i)=>{
+    const col=graphColor(n.type,n.severity);
+    const ly=n.y+n.r+14, sy=n.y+n.r+28;
+    return `<g class="g-node" data-node-idx="${i}"><circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${col}33" stroke="${col}"></circle><text class="g-label" text-anchor="middle" x="${n.x}" y="${ly}">${esc(compactLabel(n.label,18))}</text><text class="g-sub" text-anchor="middle" x="${n.x}" y="${sy}">${esc(compactLabel(nodeSubtitle(n),14))}</text></g>`;
+  }).join('');
   return `<div class="cards"><div class="card"><div class="k">Nodes</div><div class="v">${esc(g.summary?.nodes||nodes.length)}</div></div><div class="card"><div class="k">Relationships</div><div class="v">${esc(g.summary?.edges||edges.length)}</div></div><div class="card"><div class="k">Families</div><div class="v">${esc((g.summary?.by_type||{}).family||0)}</div></div><div class="card"><div class="k">Files</div><div class="v">${esc((g.summary?.by_type||{}).file||0)}</div></div><div class="card"><div class="k">Infrastructure</div><div class="v">${esc((g.summary?.by_type||{}).infrastructure||0)}</div></div></div>
-  <div class="graph-note">This graph is designed for quick interpretation: the root GitHub sample is centered, extracted files, malware families, IOCs, and enriched infrastructure are arranged around it. Click any node to inspect details.</div>
-  <div class="legend"><span><i class="dot" style="background:#42e8b4"></i>Sample</span><span><i class="dot" style="background:#ff6262"></i>Malicious file</span><span><i class="dot" style="background:#ffd166"></i>Family</span><span><i class="dot" style="background:#82d4ff"></i>Domain</span><span><i class="dot" style="background:#c792ea"></i>URL</span><span><i class="dot" style="background:#ff8a65"></i>Enriched infrastructure</span></div>
-  <div class="graphcanvas"><svg class="graphsvg" viewBox="0 0 ${layout.w} ${layout.h}" preserveAspectRatio="xMidYMid meet">${edgeSvg}${layout.nodes.map((n,i)=>{const col=graphColor(n.type,n.severity); const subtitle=n.type==='file'?(n.meta?.verdict||'file'):(n.type==='family'?'family':n.type); return `<g class="g-node" data-node-idx="${i}"><circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${col}22" stroke="${col}"></circle><text class="g-label" text-anchor="middle" x="${n.x}" y="${n.y-2}">${esc(compactLabel(n.label,22))}</text><text class="g-sub" text-anchor="middle" x="${n.x}" y="${n.y+15}">${esc(compactLabel(subtitle,18))}</text></g>`}).join('')}</svg></div><div id="graphDetail" class="detailpane">Click a node to view details.</div>
-  <h3 class="subhead">Relationship Edges</h3><div class="tablewrap"><table class="filetable"><tr><th>From</th><th>Relationship</th><th>To</th><th>Source</th></tr>${edges.slice(0,400).map(e=>`<tr><td class="mono">${esc(e.from)}</td><td>${esc(e.label)}</td><td class="mono">${esc(e.to)}</td><td>${esc(e.source||'-')}</td></tr>`).join('')||'<tr><td colspan="4">No graph relationships built.</td></tr>'}</table></div>`
+  <div class="graph-note">Root sample is centered. Drag the background to pan, scroll to zoom, and click a node to inspect relationships. Edge labels are shown in the detail panel to keep the graph readable.</div>
+  <div class="legend"><span><i class="dot" style="background:#42e8b4"></i>Sample</span><span><i class="dot" style="background:#ff6262"></i>Malicious file</span><span><i class="dot" style="background:#5cb7ff"></i>Clean file</span><span><i class="dot" style="background:#ffd166"></i>Family</span><span><i class="dot" style="background:#82d4ff"></i>Domain</span><span><i class="dot" style="background:#c792ea"></i>URL</span></div>
+  <div class="graphcanvas" id="infraGraphCanvas"><div class="graph-controls"><button type="button" class="graph-zoom-out" title="Zoom out">−</button><button type="button" class="graph-zoom-reset" title="Reset view">⟲</button><button type="button" class="graph-zoom-in" title="Zoom in">+</button><span class="graph-zoom-label">100%</span></div><svg class="graphsvg" viewBox="0 0 ${layout.w} ${layout.h}" preserveAspectRatio="xMidYMid meet"><g class="graph-viewport"><g class="graph-edges">${edgeSvg}</g><g class="graph-nodes">${nodeSvg}</g></g></svg></div>
+  <div id="graphDetail" class="detailpane">Click a node to highlight its connections and view details.</div>
+  <h3 class="subhead">Relationship Edges</h3><div class="tablewrap"><table class="filetable"><tr><th>From</th><th>Relationship</th><th>To</th><th>Source</th></tr>${edges.slice(0,400).map(e=>`<tr><td class="mono">${esc(compactLabel(e.from,36))}</td><td>${esc(e.label)}</td><td class="mono">${esc(compactLabel(e.to,36))}</td><td>${esc(e.source||'-')}</td></tr>`).join('')||'<tr><td colspan="4">No graph relationships built.</td></tr>'}</table></div>`;
 }
-function showGraphNode(idx){
-  const n=(window.__graphNodes||{})[idx]; if(!n)return; const meta=n.meta||{}; document.getElementById('graphDetail').innerHTML=`<b>${esc(n.label)}</b><div class="small">Type: ${esc(n.type)} · Severity: ${esc(n.severity||'neutral')}</div><pre>${esc(JSON.stringify(meta,null,2))}</pre>`;
-}
-document.addEventListener('click',(ev)=>{const g=ev.target.closest?.('.g-node'); if(!g)return; const idx=g.getAttribute('data-node-idx'); if(idx!=null)showGraphNode(Number(idx));});
 
 function campaignHtml(j){
   const c=j.campaign_analysis||{}; const ev=c.evidence||[]; const del=c.delivery_mechanisms||[]; const tl=c.timeline||[];
