@@ -133,8 +133,10 @@ def _add_detail(details: dict, typ: str, value: str, source_file: str, confidenc
 
 def extract_iocs_from_file(path: str | Path) -> dict:
     p = Path(path)
-    text = _safe_text(p)
     base = {'urls': [], 'domains': [], 'ips': [], 'emails': [], 'discord_webhooks': [], 'telegram': [], 'wallets': [], 'ioc_details': {}}
+    if not p.is_file():
+        return base
+    text = _safe_text(p)
     if not text:
         return base
 
@@ -258,4 +260,7 @@ def classify_infrastructure(iocs: dict) -> dict:
         'control_channels': control,
         'exfil_channels': exfil,
         'config_sources': config,
+        'payload_delivery': [],
+        'malware_downloads': [],
+        'known_bad_infrastructure': [],
     }
