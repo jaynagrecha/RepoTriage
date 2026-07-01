@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.modules.job_cache import cache_job_inventory, cached_file_path, load_manifest  # noqa: E402
-from app.modules.static_analysis.types import classify_file  # noqa: E402
+from app.modules.static_analysis.types import classify_file, _extension_from_name  # noqa: E402
 from app.modules.static_analysis.engine import analyze_file  # noqa: E402
 from app.modules.static_analysis.deobfuscator import deobfuscate_text  # noqa: E402
 
@@ -35,6 +35,17 @@ class TestJobCache(unittest.TestCase):
 
 
 class TestStaticAnalysisProfiles(unittest.TestCase):
+    def test_script_profile_from_original_filename(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.bin', delete=False) as handle:
+            handle.write('WScript.Sleep(1000); var x = new ActiveXObject("MSXML2.XMLHTTP");')
+            path = Path(handle.name)
+        try:
+            profile = classify_file(path, original_filename='dropper.pdf.js')
+            self.assertEqual(profile.category, 'script')
+            self.assertEqual(profile.extension, 'js')
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_script_profile(self):
         with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as handle:
             handle.write('eval(atob("aGVsbG8=")); function run(){return 1;}')

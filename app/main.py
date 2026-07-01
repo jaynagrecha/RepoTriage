@@ -32,7 +32,7 @@ from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '2.3.0'
+APP_VERSION = '2.3.1'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')

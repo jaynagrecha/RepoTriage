@@ -97,7 +97,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3 Static RE</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3.1 Analyst</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -215,17 +215,21 @@ function staticFilesTable(files){
 }
 function renderStaticDetail(sha256,report){
  const el=document.getElementById('staticDetail'); if(!el)return;
- const v=report.static_verdict||{}; const prof=report.profile||{}; const corr=report.correlation||{}; const typed=report.typed_analysis||{}; const deob=report.deobfuscation||{}; const fns=report.functions||[];
+ const n=report.analyst_narrative||{}; const v=report.static_verdict||{}; const prof=report.profile||{}; const corr=report.correlation||{}; const typed=report.typed_analysis||{}; const deob=report.deobfuscation||{}; const fns=report.functions||[];
+ const what=(n.what_it_does||[]).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No behavior summary available.</li>';
  const fnRows=fns.slice(0,20).map(fn=>`<tr><td>${esc(fn.name||'-')}</td><td>${esc((fn.logic_tags||fn.logic_summary||[]).join(', ')||'-')}</td><td><pre>${esc(fn.disassembly_preview||fn.snippet_preview||fn.decompilation_preview||'-')}</pre></td></tr>`).join('')||'<tr><td colspan="3">No function-level output for this file type.</td></tr>';
  const sigRows=(v.signals||[]).slice(0,20).map(s=>`<tr><td>${esc(s.category)}</td><td>${esc(s.label)}</td><td>${esc(s.weight)}</td><td>${esc(s.evidence)}</td></tr>`).join('')||'<tr><td colspan="4">No signals recorded.</td></tr>';
  const rec=(deob.recovered||[]).slice(0,10).map(x=>`<div class="iocitem"><span class="mono">${esc(x.method||'-')}</span><div class="small">${esc(x.decoded_preview||x.source_preview||'')}</div></div>`).join('')||'<div class="small">No de-obfuscation recoveries.</div>';
- el.innerHTML=`<div class="cards"><div class="card"><div class="k">Static Verdict</div><div class="v ${verdictClass(v.verdict)}">${esc(v.verdict||report.status||'-')}</div><div class="small">Confidence ${esc(v.confidence??'-')}% · Score ${esc(v.score??'-')}</div></div><div class="card"><div class="k">Profile</div><div class="v">${esc(prof.category||'-')}</div><div class="small">${esc(prof.mime_hint||'-')} · ${esc(prof.extension||'-')}</div></div><div class="card"><div class="k">Functions</div><div class="v">${esc(corr.function_count||fns.length||0)}</div></div><div class="card"><div class="k">Recovered Artifacts</div><div class="v">${esc(corr.recovered_artifacts||0)}</div></div></div>
+ el.innerHTML=`<div class="info-box" style="border-color:rgba(66,232,180,.35)"><b>${esc(n.headline||'What this file does')}</b><div class="small" style="margin-top:8px">${esc(n.assessment||'')}</div><ul style="margin:10px 0 0 18px;line-height:1.5">${what}</ul><div class="small" style="margin-top:10px;opacity:.85">${esc(n.who_should_read_this||'')}</div></div>
+ <div class="cards"><div class="card"><div class="k">Static Verdict</div><div class="v ${verdictClass(v.verdict)}">${esc(v.verdict||report.status||'-')}</div><div class="small">Confidence ${esc(v.confidence??'-')}% · Score ${esc(v.score??'-')}</div></div><div class="card"><div class="k">File Type</div><div class="v">${esc(typed.language||prof.category||'-')}</div><div class="small">${esc(report.filename||'-')} · ${esc(prof.extension||'-')}</div></div><div class="card"><div class="k">Functions</div><div class="v">${esc(corr.function_count||fns.length||0)}</div></div><div class="card"><div class="k">Recovered Artifacts</div><div class="v">${esc(corr.recovered_artifacts||0)}</div></div></div>
+ <details class="rel"><summary><b>Technical details</b> <span class="badge">optional</span></summary>
  <div class="info-box"><b>Rationale</b><div class="small">${(v.rationale||[]).map(x=>esc(x)).join('<br>')||esc(v.note||'No rationale available.')}</div></div>
- <h3 class="subhead">Correlation</h3><div class="grid2">${listBlock('Links', (corr.links||[]).map(x=>`${x.type}: ${x.detail}`))}${listBlock('Suspicious Strings', (report.universal?.suspicious_strings||[]).slice(0,15))}</div>
+ <h3 class="subhead">Suspicious strings</h3>${listBlock('Indicators in file', (report.universal?.suspicious_strings||[]).slice(0,8))}
  <h3 class="subhead">De-obfuscation / Decoding</h3>${rec}
  <h3 class="subhead">Evidence Signals</h3><div class="tablewrap"><table class="filetable"><tr><th>Category</th><th>Label</th><th>Weight</th><th>Evidence</th></tr>${sigRows}</table></div>
  <h3 class="subhead">Function / Method Logic</h3><div class="tablewrap"><table class="filetable"><tr><th>Name</th><th>Logic Tags</th><th>Preview</th></tr>${fnRows}</table></div>
- <h3 class="subhead">Typed Analysis Summary</h3><pre>${esc(JSON.stringify({logic_summary:typed.logic_summary||[], language:typed.language, format:typed.format, pattern_matches:(typed.pattern_matches||[]).slice(0,10)}, null, 2))}</pre>`;
+ <h3 class="subhead">Typed Analysis Summary</h3><pre>${esc(JSON.stringify({logic_summary:typed.logic_summary||[], language:typed.language, format:typed.format, pattern_matches:(typed.pattern_matches||[]).slice(0,10)}, null, 2))}</pre>
+ </details>`;
 }
 function staticAnalysisHtml(){
  return `<div class="info-box"><b>Universal Static Analysis</b><div class="small">On-demand reverse-engineering for every file in the job inventory — PE/ELF, scripts, documents, archives, images, configs, and unknown binaries. Static verdict is independent from VirusTotal.</div></div><div id="staticTableHost"><div class="small">Load a completed job to enumerate analyzable files…</div></div><h3 class="subhead">Selected File Report</h3><div id="staticDetail" class="detailpane">Run static analysis on a cached file to view disassembly, de-obfuscation, function logic, correlation, and static verdict.</div>`;

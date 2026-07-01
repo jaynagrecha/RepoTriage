@@ -105,13 +105,20 @@ def analyze_script(path: Path) -> dict[str, Any]:
                 break
     functions = _extract_functions(text, language)
     line_count = text.count('\n') + 1
+    logic_summary = _summarize_script_logic(matches, functions)
+    if re.search(r'_0x[a-f0-9]{3,}', text, re.I):
+        logic_summary.append('Uses hex-variable obfuscation (_0x…) typical of packed JavaScript malware')
+    if 'ActiveXObject' in text or 'WScript' in text:
+        logic_summary.append('Targets Windows Script Host via ActiveXObject/WScript — often used in document-themed droppers')
+    if 'fromCharCode' in text or 'charCodeAt' in text:
+        logic_summary.append('Builds strings dynamically to evade static scanners')
     return {
         'language': language,
         'line_count': line_count,
         'char_count': len(text),
         'pattern_matches': matches[:60],
         'functions': functions,
-        'logic_summary': _summarize_script_logic(matches, functions),
+        'logic_summary': logic_summary,
     }
 
 

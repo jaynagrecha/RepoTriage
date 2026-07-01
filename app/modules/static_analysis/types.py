@@ -57,9 +57,35 @@ def _is_mostly_text(sample: bytes) -> bool:
     return printable / len(sample) >= 0.85
 
 
-def classify_file(path: Path, declared_type: str | None = None) -> FileProfile:
+def _extension_from_name(name: str | None) -> str:
+    if not name:
+        return ''
+    cleaned = name.strip().split('/')[-1].split('\\')[-1]
+    suffix = Path(cleaned).suffix.lower().lstrip('.')
+    if suffix and suffix != 'bin':
+        return suffix
+    parts = cleaned.lower().split('.')
+    if len(parts) >= 2:
+        return parts[-1]
+    return ''
+
+
+def _declared_script_type(declared: str) -> bool:
+    declared = (declared or '').lower()
+    return any(x in declared for x in ('script', 'javascript', 'js', 'vbs', 'powershell', 'ps1', 'batch', 'python', 'php', 'hta', 'wsf'))
+
+
+def _content_looks_like_script(sample: bytes) -> bool:
+    text = sample.decode('utf-8', errors='ignore').lower()
+    markers = ('function ', 'var ', 'const ', 'wscript', 'activexobject', '_0x', 'powershell', 'invoke-', '<?php', '#!/bin/')
+    return sum(1 for m in markers if m in text) >= 2
+
+
+def classify_file(path: Path, declared_type: str | None = None, original_filename: str | None = None) -> FileProfile:
     magic = _read_magic(path)
-    ext = path.suffix.lower().lstrip('.')
+    path_ext = path.suffix.lower().lstrip('.')
+    name_ext = _extension_from_name(original_filename)
+    ext = name_ext or (path_ext if path_ext != 'bin' else '')
     declared = (declared_type or '').lower()
 
     if magic.startswith(b'MZ'):
@@ -103,8 +129,8 @@ def classify_file(path: Path, declared_type: str | None = None) -> FileProfile:
     except Exception:
         pass
 
-    if ext in SCRIPT_EXTENSIONS or 'script' in declared:
-        return FileProfile('script', 'text/x-script', ext, magic, True, ('script', 'universal'))
+    if ext in SCRIPT_EXTENSIONS or _declared_script_type(declared):
+        return FileProfile('script', 'text/x-script', ext or 'script', magic, True, ('script', 'universal'))
     if ext in DOCUMENT_EXTENSIONS or any(x in declared for x in ('pdf', 'html', 'json', 'xml', 'document')):
         return FileProfile('document', 'text/plain', ext, magic, _is_mostly_text(sample), ('document', 'universal'))
     if ext in ARCHIVE_EXTENSIONS or 'archive' in declared:
@@ -114,7 +140,9 @@ def classify_file(path: Path, declared_type: str | None = None) -> FileProfile:
     if ext in BINARY_EXTENSIONS or 'executable' in declared or 'pe ' in declared:
         return FileProfile('binary', 'application/octet-stream', ext, magic, False, ('binary', 'universal'))
 
-    if _is_mostly_text(sample):
+    if _is_mostly_text(sample) or _content_looks_like_script(sample):
+        if _content_looks_like_script(sample):
+            return FileProfile('script', 'text/x-script', ext or 'script', magic, True, ('script', 'universal'))
         return FileProfile('text', 'text/plain', ext or 'txt', magic, True, ('text', 'universal'))
 
     return FileProfile('unknown', 'application/octet-stream', ext or 'bin', magic, False, ('binary', 'universal'))

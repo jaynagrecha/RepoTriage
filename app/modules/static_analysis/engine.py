@@ -13,9 +13,10 @@ from .document_analyzer import analyze_document
 from .image_analyzer import analyze_image
 from .script_analyzer import analyze_script
 from .text_analyzer import analyze_text
-from .types import FileProfile, classify_file
+from .types import FileProfile, classify_file, _content_looks_like_script, _extension_from_name
 from .universal import analyze_universal
 from .verdict import build_verdict
+from .narrative import build_analyst_narrative
 
 
 class StaticAnalysisError(Exception):
@@ -77,9 +78,12 @@ def _correlate(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _typed_analysis(path: Path, profile: FileProfile) -> dict[str, Any]:
+def _typed_analysis(path: Path, profile: FileProfile, *, filename: str | None = None) -> dict[str, Any]:
+    ext = _extension_from_name(filename) or profile.extension
     category = profile.category
-    if category == 'script' or (profile.is_text_like and path.suffix.lower().lstrip('.') in {'js', 'ps1', 'vbs', 'bat', 'cmd', 'py', 'php', 'hta', 'sh'}):
+    if ext in {'js', 'jsx', 'mjs', 'cjs', 'vbs', 'vbe', 'ps1', 'psm1', 'bat', 'cmd', 'py', 'php', 'hta', 'wsf', 'wsh', 'sh'}:
+        return analyze_script(path)
+    if category == 'script' or (profile.is_text_like and ext in {'js', 'ps1', 'vbs', 'bat', 'cmd', 'py', 'php', 'hta', 'sh'}):
         return analyze_script(path)
     if category in {'pdf', 'markup', 'structured_text', 'document'}:
         return analyze_document(path, profile.extension)
@@ -101,16 +105,23 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
     if not path.is_file():
         raise StaticAnalysisError('Cached file not found')
 
-    profile = classify_file(path, declared_type)
+    profile = classify_file(path, declared_type, original_filename=filename)
     universal = analyze_universal(path)
     raw = path.read_bytes()
     deobfuscation = deobfuscate_bytes(raw)
-    typed = _typed_analysis(path, profile)
+    typed = _typed_analysis(path, profile, filename=filename)
+
+    if profile.category in {'unknown', 'binary'} and _content_looks_like_script(raw[:8192]):
+        script_typed = analyze_script(path)
+        typed = {**typed, **script_typed}
+        profile = FileProfile('script', 'text/x-script', _extension_from_name(filename) or 'script', profile.magic, True, ('script', 'universal'))
 
     functions = _merge_functions(
         typed.get('functions') or [],
         (typed.get('r2') or {}).get('functions') or [],
     )
+    if profile.category == 'script':
+        functions = [fn for fn in functions if not str(fn.get('name', '')).startswith('offset_')]
 
     report = {
         'status': 'completed',
@@ -131,6 +142,7 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
     }
     report['correlation'] = _correlate(report)
     report['static_verdict'] = build_verdict(report)
+    report['analyst_narrative'] = build_analyst_narrative(report)
     return report
 
 
