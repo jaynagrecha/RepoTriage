@@ -29,16 +29,54 @@ from .modules.mitre_mapper import map_mitre
 from .modules.narrative import generate_attack_narrative
 from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
 from .modules.rate_limit import UsageLimiter, RateLimitExceeded
+from .platform import PlatformDB, TaskQueue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '2.3.3'
+APP_VERSION = '4.0.0-alpha.1'
+PLATFORM_VERSION = '4.0.0-alpha.1'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
 
 USAGE_LIMITER = UsageLimiter(BASE_DIR)
+PLATFORM_DB = PlatformDB(BASE_DIR)
+TASK_QUEUE = TaskQueue(PLATFORM_DB)
+
+
+@app.on_event('startup')
+async def _startup_platform():
+    app.state.platform_db = PLATFORM_DB
+    app.state.base_dir = BASE_DIR
+    app.state.task_queue = TASK_QUEUE
+    from .v4_routes import router as v4_router
+
+    app.include_router(v4_router)
+    if _env_truthy('WORKER_INLINE', False):
+        from .worker_main import worker_loop
+
+        poll = float(os.getenv('WORKER_POLL_SECONDS', '2'))
+        asyncio.create_task(worker_loop(poll))
+
+
+def _enqueue_deep_analysis_for_job(job_id: str) -> None:
+    if not _env_truthy('AUTO_DEEP_ANALYSIS', False):
+        return
+    manifest = load_manifest(BASE_DIR, job_id) or {}
+    for entry in manifest.get('files') or []:
+        if not entry.get('cached') or not entry.get('sha256'):
+            continue
+        TASK_QUEUE.enqueue(
+            'deep_analysis',
+            job_id=job_id,
+            sha256=entry['sha256'],
+            payload={
+                'filename': entry.get('display_name') or entry.get('filename'),
+                'file_type': entry.get('file_type'),
+                'vt_verdict': entry.get('vt_verdict'),
+            },
+        )
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -345,6 +383,10 @@ async def health():
         'rate_limit_enabled': USAGE_LIMITER.enabled,
         'free_daily_analysis_limit': USAGE_LIMITER.free_daily_limit,
         'static_analysis_enabled': _env_truthy('STATIC_ANALYSIS_ENABLED', True),
+        'platform_version': PLATFORM_VERSION,
+        'auto_deep_analysis': _env_truthy('AUTO_DEEP_ANALYSIS', False),
+        'worker_mode': _env_truthy('WORKER_ENABLED', True),
+        'worker_inline': _env_truthy('WORKER_INLINE', False),
         'r2_available': bool(shutil.which(os.getenv('R2_BINARY', 'r2') or 'r2')),
         'burst_analysis_limit_per_minute': USAGE_LIMITER.burst_limit,
     }
@@ -363,6 +405,7 @@ async def _run_job(job_id: str, req: AnalyzeRequest) -> None:
             'result': result,
             'error': None,
         })
+        _enqueue_deep_analysis_for_job(job_id)
     except Exception as e:
         detail = getattr(e, 'detail', None) or str(e)
         JOBS[job_id].update({

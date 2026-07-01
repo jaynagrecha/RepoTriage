@@ -130,7 +130,7 @@ class TestNarrativeRisk(unittest.TestCase):
 
 class TestVersion(unittest.TestCase):
     def test_app_version_present(self):
-        self.assertTrue(APP_VERSION.startswith('2.'))
+        self.assertTrue(APP_VERSION.startswith(('2.', '4.')))
 
 
 if __name__ == '__main__':

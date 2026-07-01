@@ -1,0 +1,37 @@
+# Render Blueprint — web + worker on Render only (mount persistent disk at /var/data)
+services:
+  - type: web
+    name: repotriage-web
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: PLATFORM_DATA_DIR
+        value: /var/data
+      - key: WORKER_ENABLED
+        value: "false"
+      - key: WORKER_INLINE
+        value: "false"
+      - key: AUTO_DEEP_ANALYSIS
+        value: "false"
+      - key: STATIC_ANALYSIS_ENABLED
+        value: "true"
+    disk:
+      name: repotriage-data
+      mountPath: /var/data
+      sizeGB: 10
+
+  - type: worker
+    name: repotriage-worker
+    runtime: docker
+    dockerCommand: python -m app.worker_main
+    plan: starter
+    envVars:
+      - key: PLATFORM_DATA_DIR
+        value: /var/data
+      - key: WORKER_POLL_SECONDS
+        value: "2"
+    disk:
+      name: repotriage-data
+      mountPath: /var/data
+      sizeGB: 10

@@ -97,7 +97,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.3.3 IOCs</div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v4 alpha</div></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -108,6 +108,7 @@
 const tabGroups=[
   {label:'Summary',tabs:['Overview','Files','Executive Summary']},
   {label:'Deep Analysis',tabs:['Static Analysis']},
+  {label:'Platform',tabs:['Cases & Notes','Blocklist & Diff']},
   {label:'CTI Fusion',tabs:['CTI Summary','Campaign Analysis','Threat Actor','Correlation Matrix','Infrastructure Graph','Related Samples']},
   {label:'Intel Sources',tabs:['VirusTotal','AbuseCH','ThreatFox','MalwareBazaar','URLHaus','Feodo','SSLBL','Infrastructure']},
   {label:'Reporting',tabs:['Exports','Analyst Report','Attack Narrative','MITRE ATT&CK','Raw JSON']}
@@ -167,7 +168,7 @@ const tabs=document.getElementById('tabs');
 tabs.innerHTML=tabGroups.map(g=>`<div class="tab-section"><span class="tab-section-label">${esc(g.label)}</span>${g.tabs.map(t=>{const i=tabNames.indexOf(t); return `<button class="tab ${i==0?'active':''}" data-tab="${i}" onclick="showTab(${i})">${esc(t)}</button>`}).join('')}<span class="tab-sep"></span></div>`).join('');
 document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');
 queueMicrotask(()=>{const gc=document.getElementById('infraGraphCanvas'); if(gc)initGraphCanvas(gc); refreshStaticTable();});}
-function showTab(i){document.querySelectorAll('.tab').forEach((e,n)=>e.classList.toggle('active',n===i));document.querySelectorAll('.tabbody').forEach((e,n)=>e.classList.toggle('active',n===i))}
+function showTab(i){document.querySelectorAll('.tab').forEach((e,n)=>e.classList.toggle('active',n===i));document.querySelectorAll('.tabbody').forEach((e,n)=>e.classList.toggle('active',n===i)); if(tabNames[i]==='Cases & Notes'){refreshCasesList(); refreshJobNotes();}}
 function displayName(x){return x.original_name || x.filename || x.path || 'file'}
 function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) sub.push(x.filename); if(x.stored_name) sub.push('stored as: '+x.stored_name); if(x.blocked_by_local_av) sub.push('local AV blocked/quarantined storage; hash captured in-memory'); if(x.analysis_note) sub.push(x.analysis_note); return `<tr><td><div class="file-path">${esc(displayName(x))}</div><div class="file-sub">${esc(sub.join(' · '))}</div></td><td>${esc(x.file_type||'-')}</td><td>${fmtBytes(x.size_bytes)}</td><td class="hashcell mono"><div class="hashline"><span class="hashlabel">MD5</span><span class="hashval" title="${fullHash(x.md5)}">${esc(shortHash(x.md5))}</span></div><div class="hashline"><span class="hashlabel">SHA1</span><span class="hashval" title="${fullHash(x.sha1)}">${esc(shortHash(x.sha1))}</span></div><div class="hashline"><span class="hashlabel">SHA256</span><span class="hashval" title="${fullHash(x.sha256)}">${esc(shortHash(x.sha256))}</span></div></td><td>${vtBadge(x.vt_verdict)}<div class="file-sub">${Number(x.vt_malicious||0)} malicious / ${Number(x.vt_suspicious||0)} suspicious</div></td><td>${x.vt_link?`<a href="${esc(x.vt_link)}" target="_blank">VT Report</a>`:'-'}</td></tr>`}
 function fileTable(rows){return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>Size</th><th>Hashes</th><th>VT Verdict</th><th>Link</th></tr>${rows.map(fileRow).join('')||'<tr><td colspan="6">No files listed.</td></tr>'}</table></div>`}
@@ -186,7 +187,7 @@ function staticFilesTable(files){
  return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>VT</th><th>Static Result</th><th>Action</th></tr>${(files||[]).map(f=>{
    const stale=f.stale?'<span class="badge warn">outdated</span> ':'';
    const label=f.static_verdict_label||f.static_verdict||'not run';
-   return `<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub">${esc(f.file_type||'-')} · ${esc(shortHash(f.sha256))}</div></td><td>${vtBadge(f.vt_verdict)}</td><td>${stale}${staticVerdictLabel(f.static_verdict, label)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}<div class="file-sub">${esc(f.static_status||'not_started')}${f.indicator_url_count?` · ${esc(f.indicator_url_count)} URL(s)`:''}</div></td><td>${f.cached?`<button onclick="runStaticAnalysis('${f.sha256}', this, ${f.stale||f.static_status==='completed'?'true':'false'})">${f.stale||f.static_status==='completed'?'Re-analyse':'Analyse'}</button>`:'<span class="small">Not cached</span>'}</td></tr>`}).join('')||'<tr><td colspan="4">No files in job inventory.</td></tr>'}</table></div>`;
+   return `<tr><td><div class="file-path">${esc(f.filename||'-')}</div><div class="file-sub">${esc(f.file_type||'-')} · ${esc(shortHash(f.sha256))}</div></td><td>${vtBadge(f.vt_verdict)}</td><td>${stale}${staticVerdictLabel(f.static_verdict, label)} ${f.static_confidence!=null?`<span class="small">${esc(f.static_confidence)}%</span>`:''}<div class="file-sub">${esc(f.static_status||'not_started')}${f.indicator_url_count?` · ${esc(f.indicator_url_count)} URL(s)`:''}</div></td><td>${f.cached?`<button onclick="runStaticAnalysis('${f.sha256}', this, ${f.stale||f.static_status==='completed'?'true':'false'})">${f.stale||f.static_status==='completed'?'Re-analyse':'Analyse'}</button> <button onclick="runDeepAnalysis('${f.sha256}', this)">Deep</button>`:'<span class="small">Not cached</span>'}</td></tr>`}).join('')||'<tr><td colspan="4">No files in job inventory.</td></tr>'}</table></div>`;
 }
 function staticIndicatorList(title, items, link=false){
  if(!items||!items.length)return '';
@@ -216,8 +217,95 @@ function renderStaticDetail(sha256,report){
  <pre style="white-space:pre-wrap;font-size:12px">${esc((v.rationale||[]).join('\n')||'No technical rationale recorded.')}</pre>
  </details>`;
 }
+ async function runDeepAnalysis(sha256, btn){
+  if(!currentJobId)return alert('Run a completed job first');
+  if(btn)btn.disabled=true;
+  try{
+    const r=await fetch(`/api/v4/jobs/${currentJobId}/files/${sha256}/deep-analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})});
+    const j=await r.json();
+    if(!r.ok)throw new Error(apiDetail(j.detail)||'Deep analysis request failed');
+    let attempts=0;
+    while(attempts<300){
+      attempts++;
+      const pr=await fetch(`/api/v4/jobs/${currentJobId}/files/${sha256}/deep-analysis`);
+      const pj=await pr.json();
+      if(pj.status==='completed'&&pj.artifact){renderDeepDetail(sha256,pj.artifact);return}
+      if(pj.status==='failed')throw new Error(pj.task?.error||'Deep analysis failed');
+      const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`<div class="info-box"><b>Deep analysis running…</b><div class="small">${esc(pj.status||'queued')} · YARA · sandbox-lite · IOC reputation · similarity</div></div>`;
+      await new Promise(res=>setTimeout(res,2000));
+    }
+    throw new Error('Deep analysis timed out');
+  }catch(e){alert(e.message)}
+  finally{if(btn)btn.disabled=false}
+}
+function renderDeepDetail(sha256,b){
+ const el=document.getElementById('staticDetail'); if(!el)return;
+ const cv=b.combined_verdict||'unknown';
+ const staticV=(b.static_analysis?.static_verdict?.verdict_label)||'-';
+ const yaraMatches=(b.yara?.matches||[]);
+ const yara=yaraMatches.map(m=>m.rule).join(', ')||'none';
+ const sb=(b.sandbox_lite?.behaviors||[]).join(', ')||'none';
+ const urls=(b.static_analysis?.extracted_indicators?.urls||[]).slice(0,10);
+ const rep=(b.ioc_reputation?.results||[]).filter(x=>x.malicious>0).map(x=>x.url);
+ const reasons=(b.confidence_explanation?.reasons||[]).slice(0,8);
+ const similar=(b.similarity?.similar_samples||[]).slice(0,5);
+ const family=(b.family_hints?.family_matches||[]).map(x=>x.family).join(', ')||'none';
+ const certs=(b.cert_intel?.results||[]).filter(x=>x.certificates?.length).slice(0,3);
+ el.innerHTML=`<div class="root-card" style="padding:18px"><div style="font-size:13px;opacity:.8">Deep analysis (Render worker)</div><div style="font-size:26px;font-weight:700" class="${verdictClass(cv)}">${esc(cv)}</div><div class="small">Static: ${esc(staticV)} · YARA: ${esc(yara)} · Behaviors: ${esc(sb)} · Family hints: ${esc(family)}</div></div>
+ ${reasons.length?`<div class="info-box" style="margin-top:12px"><b>Why this verdict</b>${reasons.map(r=>`<div class="small"><span class="badge ok">${esc(r.source)}</span> <b>${esc(r.label||'-')}</b> — ${esc(r.evidence||'')}</div>`).join('')}</div>`:''}
+ <div class="info-box" style="margin-top:12px"><b>Extracted URLs</b><div class="small">${urls.length?urls.map(u=>`<div><a href="${esc(u)}" target="_blank">${esc(u)}</a></div>`).join(''):'None found'}</div></div>
+ ${rep.length?`<div class="info-box"><b>Malicious URLs (VT lookup)</b><div class="small">${rep.map(u=>esc(u)).join('<br>')}</div></div>`:''}
+ ${yaraMatches.length?`<div class="info-box"><b>YARA matches</b><div class="small">${yaraMatches.map(m=>`<div><b>${esc(m.rule)}</b> ${esc((m.meta||{}).description||'')}</div>`).join('')}</div></div>`:''}
+ ${similar.length?`<div class="info-box"><b>Similar samples (ssdeep)</b><div class="small">${similar.map(s=>`<div class="mono">${esc(s.sha256||'-')} · ${esc(s.similarity||0)}% · ${esc(s.filename||'')}</div>`).join('')}</div></div>`:''}
+ ${certs.length?`<div class="info-box"><b>Certificate transparency (crt.sh)</b><div class="small">${certs.map(c=>`<div><b>${esc(c.domain)}</b> — ${esc(c.cert_count||0)} cert(s)</div>`).join('')}</div></div>`:''}
+ <details class="rel"><summary>Full deep analysis JSON</summary><pre>${esc(JSON.stringify(b,null,2))}</pre></details>`;
+}
+function platformCasesHtml(){
+ return `<div class="info-box"><b>Investigation cases</b><div class="small">Group related jobs into cases, add analyst notes, and track linked investigations. Stored on Render persistent disk (SQLite).</div></div>
+ <div class="grid2"><div class="info-box"><div class="info-label">Create case</div><input id="caseName" placeholder="Case name"/><textarea id="caseNotes" rows="3" placeholder="Optional notes" style="width:100%;margin-top:8px;background:#061019;color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px"></textarea><button style="margin-top:8px" onclick="createCase()">Create case</button><div id="caseCreateMsg" class="small"></div></div>
+ <div class="info-box"><div class="info-label">Link current job to case</div><input id="linkCaseId" placeholder="Case ID"/><button style="margin-top:8px" onclick="linkJobToCase()">Link job</button><div id="caseLinkMsg" class="small"></div></div></div>
+ <h3 class="subhead">Job notes</h3><div class="grid2"><div class="info-box"><textarea id="noteBody" rows="3" placeholder="Analyst note for current job" style="width:100%;background:#061019;color:var(--text);border:1px solid var(--border);border-radius:12px;padding:10px"></textarea><input id="noteAuthor" placeholder="Author (optional)" style="margin-top:8px"/><button style="margin-top:8px" onclick="addJobNote()">Add note</button></div><div id="notesList" class="info-box"><div class="small">Load a job to view notes.</div></div></div>
+ <h3 class="subhead">Cases</h3><div id="casesList" class="info-box"><div class="small">Loading…</div></div>`;
+}
+function platformBlocklistHtml(){
+ if(!currentJobId) return `<div class="info-box">Run a completed job first.</div>`;
+ return `<div class="info-box"><b>Blocklist &amp; job diff</b><div class="small">Export IOC blocklists from the current job or compare two completed jobs.</div></div>
+ <div class="btnrow"><button onclick="window.open('/api/v4/jobs/${esc(currentJobId)}/export/blocklist?fmt=plain','_blank')">Plain blocklist</button><button onclick="window.open('/api/v4/jobs/${esc(currentJobId)}/export/blocklist?fmt=suricata','_blank')">Suricata rules</button><button onclick="window.open('/api/v4/jobs/${esc(currentJobId)}/export/blocklist?fmt=hosts','_blank')">Hosts file</button></div>
+ <h3 class="subhead">Compare jobs</h3><div class="grid2"><div class="info-box"><div class="info-label">Job A</div><input id="diffJobA" value="${esc(currentJobId)}" /></div><div class="info-box"><div class="info-label">Job B</div><input id="diffJobB" placeholder="Other job ID"/></div></div><button onclick="runJobDiff()">Compare</button><div id="diffResult" class="detailpane" style="margin-top:12px">Enter two completed job IDs.</div>`;
+}
+async function createCase(){
+ const name=document.getElementById('caseName')?.value?.trim(); if(!name)return alert('Case name required');
+ const notes=document.getElementById('caseNotes')?.value||'';
+ try{const r=await fetch('/api/v4/cases',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,notes,tags:[]})}); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); document.getElementById('caseCreateMsg').innerHTML=`<span class="ok">Created case <span class="mono">${esc(j.case_id)}</span></span>`; refreshCasesList();}catch(e){alert(e.message)}
+}
+async function linkJobToCase(){
+ if(!currentJobId)return alert('No job loaded');
+ const caseId=document.getElementById('linkCaseId')?.value?.trim(); if(!caseId)return alert('Case ID required');
+ try{const r=await fetch(`/api/v4/cases/${caseId}/jobs/${currentJobId}`,{method:'POST'}); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); document.getElementById('caseLinkMsg').innerHTML='<span class="ok">Job linked.</span>';}catch(e){alert(e.message)}
+}
+async function addJobNote(){
+ if(!currentJobId)return alert('No job loaded');
+ const body=document.getElementById('noteBody')?.value?.trim(); if(!body)return alert('Note required');
+ const author=document.getElementById('noteAuthor')?.value||'';
+ try{const r=await fetch(`/api/v4/jobs/${currentJobId}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body,author})}); if(!r.ok){const j=await r.json(); throw new Error(apiDetail(j.detail));} document.getElementById('noteBody').value=''; refreshJobNotes();}catch(e){alert(e.message)}
+}
+async function refreshJobNotes(){
+ if(!currentJobId)return;
+ const el=document.getElementById('notesList'); if(!el)return;
+ try{const r=await fetch(`/api/v4/jobs/${currentJobId}/notes`); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); el.innerHTML=(j.notes||[]).length?(j.notes||[]).map(n=>`<div style="margin-bottom:10px"><div>${esc(n.body)}</div><div class="small">${esc(n.author||'analyst')} · ${esc(n.created_at||'')}</div></div>`).join(''):'<div class="small">No notes yet.</div>';}catch(e){el.innerHTML=`<div class="err">${esc(e.message)}</div>`}
+}
+async function refreshCasesList(){
+ const el=document.getElementById('casesList'); if(!el)return;
+ try{const r=await fetch('/api/v4/cases'); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); el.innerHTML=(j.cases||[]).length?(j.cases||[]).map(c=>`<div style="margin-bottom:10px"><b>${esc(c.name)}</b> <span class="mono small">${esc(c.case_id)}</span><div class="small">${esc(c.notes||'')}</div></div>`).join(''):'<div class="small">No cases yet.</div>';}catch(e){el.innerHTML=`<div class="err">${esc(e.message)}</div>`}
+}
+async function runJobDiff(){
+ const a=document.getElementById('diffJobA')?.value?.trim(); const b=document.getElementById('diffJobB')?.value?.trim();
+ if(!a||!b)return alert('Both job IDs required');
+ const el=document.getElementById('diffResult'); if(el)el.innerHTML='Comparing…';
+ try{const r=await fetch(`/api/v4/jobs/diff?job_a=${encodeURIComponent(a)}&job_b=${encodeURIComponent(b)}`); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); el.innerHTML=`<pre>${esc(JSON.stringify(j,null,2))}</pre>`;}catch(e){if(el)el.innerHTML=`<div class="err">${esc(e.message)}</div>`}
+}
 function staticAnalysisHtml(){
- return `<div class="info-box"><b>Static Analysis</b><div class="small">Plain-English malware assessment for each file. Click Analyse — results explain what the file does and what action to take. Technical evidence is optional.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse.</div>`;
+ return `<div class="info-box"><b>Static &amp; Deep Analysis</b><div class="small"><b>Analyse</b> = fast static RE. <b>Deep</b> = worker pipeline (YARA, sandbox-lite, macro extract, ssdeep similarity, live URL VT lookup) — requires Render worker service.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse or Deep.</div>`;
 }
 async function runStaticAnalysis(sha256, btn, force=false){
  if(!currentJobId)return alert('Run a completed analysis job first');
@@ -562,6 +650,8 @@ function vtHtml(j){const v=j.vt||{};const rows=(j.files||[]).map(x=>`<tr><td><di
 function tabHtml(t,j){const f=j.root_file||{}, s=j.source||{}; if(t==='Overview')return `<div class="root-card"><div class="info-box"><div class="info-label">Source URL</div><div class="info-value"><a href="${esc(s.display_url)}" target="_blank">${esc(s.display_url)}</a></div></div><div class="info-box"><div class="info-label">Owner / Repo</div><div class="info-value">${esc(s.owner)}/${esc(s.repo)}</div></div><div class="info-box"><div class="info-label">Root File</div><div class="info-value">${esc(f.filename)}</div></div><div class="info-box"><div class="info-label">Root VT</div><div class="info-value">${vtBadge(j.vt?.verdict)}</div></div></div><h3 class="subhead">Hashes</h3><div class="tablewrap"><table class="filetable"><tr><th>MD5</th><th>SHA1</th><th>SHA256</th></tr><tr><td class="mono">${esc(f.md5)}</td><td class="mono">${esc(f.sha1)}</td><td class="mono">${esc(f.sha256)}</td></tr></table></div><h3 class="subhead">Public Analysis Safety</h3><div class="grid2"><div class="info-box"><div class="info-label">Sample Handling</div><div class="info-value">Server-side only</div><div class="small">The browser receives only metadata, hashes, IOCs, CTI enrichment and reports.</div></div><div class="info-box"><div class="info-label">Mode</div><div class="info-value">${esc(j.safety?.analysis_mode||'local_dev')}</div><div class="small">Production should run this behind an isolated Linux worker/container.</div></div></div><h3 class="subhead">Extraction Summary</h3><div class="cards"><div class="card"><div class="k">Total Listed</div><div class="v">${esc(j.file_stats?.total_listed||1)}</div></div><div class="card"><div class="k">Extracted Children</div><div class="v">${esc(j.file_stats?.extracted_children||0)}</div></div><div class="card"><div class="k">Malicious</div><div class="v ${j.file_stats?.malicious?'err':''}">${esc(j.file_stats?.malicious||0)}</div></div><div class="card"><div class="k">Suspicious</div><div class="v ${j.file_stats?.suspicious?'pending':''}">${esc(j.file_stats?.suspicious||0)}</div></div><div class="card"><div class="k">Errors</div><div class="v">${esc(j.file_stats?.errors||0)}</div></div><div class="card"><div class="k">IOCs</div><div class="v">${esc(j.file_stats?.iocs||0)}</div></div></div>`;
 if(t==='Files')return groupedFilesHtml(j);
 if(t==='Static Analysis')return staticAnalysisHtml();
+if(t==='Cases & Notes')return platformCasesHtml();
+if(t==='Blocklist & Diff')return platformBlocklistHtml();
 if(t==='CTI Summary')return ctiSummaryHtml(j);
 if(t==='Campaign Analysis')return campaignHtml(j);
 if(t==='Threat Actor')return actorHtml(j);

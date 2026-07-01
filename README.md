@@ -1,8 +1,52 @@
-# RepoTriage v2.3.0
+# RepoTriage v4.0.0-alpha.1
 
-GitHub and GitLab Payload Intelligence Platform — public job-based file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping, on-demand universal static analysis, and result-only browser output.
+GitHub and GitLab Payload Intelligence Platform — public job-based file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping, on-demand universal static analysis, **deep analysis worker pipeline**, and result-only browser output.
 
 ## Changelog
+
+### v4.0.0-alpha.1 — Platform foundation (Render web + worker)
+
+**Deep analysis pipeline** (Render worker service or `WORKER_INLINE=true` for single-service dev):
+
+- SQLite task queue + persistent artifacts on Render disk (`PLATFORM_DATA_DIR=/var/data`)
+- **Deep** button per cached file: static + YARA + sandbox-lite + Office macros + ssdeep similarity + VT URL reputation + crt.sh cert intel + family/config hints
+- Combined verdict with confidence explanation panel in UI
+- **Cases & Notes** tab: investigation cases, job notes, case linking
+- **Blocklist & Diff** tab: plain/Suricata/hosts exports, job-to-job diff
+- Webhooks (`WEBHOOK_URL`) on malicious deep-analysis completion
+- API keys admin endpoint (`POST /api/v4/admin/api-keys` with `x-admin-bypass-token`)
+- Docker image with libyara, ssdeep, radare2; `render.yaml` Blueprint for **web + worker** sharing one persistent disk
+
+**Sandbox-lite (Render-safe):** scripts analysed statically for behavioral markers; PE/ELF binaries are **not executed**. This replaces a separate RepoSandbox VM while staying within Render budget.
+
+**New environment variables**
+
+```env
+PLATFORM_DATA_DIR=/var/data
+WORKER_ENABLED=true
+WORKER_INLINE=false
+WORKER_POLL_SECONDS=2
+AUTO_DEEP_ANALYSIS=false
+WEBHOOK_URL=
+WEBHOOK_SECRET=
+YARA_RULES_DIR=
+```
+
+**Deploy on Render**
+
+1. Connect repo and apply `render.yaml` Blueprint (creates `repotriage-web` + `repotriage-worker`).
+2. Mount shared 10GB disk at `/var/data` on both services.
+3. Set secrets: `VT_API_KEY`, optional `GITLAB_TOKEN`, `WEBHOOK_URL`.
+4. Web serves UI/API; worker runs `python -m app.worker_main`.
+5. For local single-process dev without a worker container, set `WORKER_INLINE=true`.
+
+**v4 API highlights**
+
+- `POST /api/v4/jobs/{job_id}/files/{sha256}/deep-analysis`
+- `GET /api/v4/jobs/{job_id}/files/{sha256}/deep-analysis`
+- `GET /api/v4/jobs/{job_id}/export/blocklist?fmt=plain|suricata|hosts`
+- `GET /api/v4/jobs/diff?job_a=&job_b=`
+- `POST/GET /api/v4/cases`, `POST /api/v4/jobs/{job_id}/notes`
 
 ### v2.3.0 — Universal on-demand static analysis
 
