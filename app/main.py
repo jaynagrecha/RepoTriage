@@ -29,7 +29,7 @@ from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '2.2B.1'
+APP_VERSION = '2.2B.4'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -131,7 +131,13 @@ def active_jobs_for_ip(ip: str) -> int:
     return count
 
 class AnalyzeRequest(BaseModel):
-    file_url: str = Field(..., examples=['https://github.com/user/repo/blob/main/payload.zip'])
+    file_url: str = Field(
+        ...,
+        examples=[
+            'https://github.com/user/repo/blob/main/payload.zip',
+            'https://gitlab.com/group/project/-/blob/main/payload.zip',
+        ],
+    )
 
     @field_validator('file_url')
     @classmethod
@@ -151,7 +157,7 @@ def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
     else:
         vt_line = f"VirusTotal verdict: {verdict} ({malicious} malicious / {suspicious} suspicious)."
     return (
-        f"RepoTriage {APP_VERSION} acquired the GitHub-hosted file and calculated MD5/SHA1/SHA256.\n\n"
+        f"RepoTriage {APP_VERSION} acquired the remote-hosted file and calculated MD5/SHA1/SHA256.\n\n"
         f"File: {meta.get('filename')}\n"
         f"Type: {file_type}\n"
         f"SHA256: {hashes.get('sha256')}\n\n"

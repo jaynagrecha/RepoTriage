@@ -97,8 +97,8 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.3 Mobile</div></div>
-    <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub file URL: https://github.com/user/repo/blob/main/payload.zip"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub file URL for server-side analysis. The browser receives metadata and CTI results only — never sample bytes. Set KEEP_QUARANTINE=true on the backend to retain samples for local debugging.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.4 GitLab</div></div>
+    <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
       <div class="panel"><div class="tabs" id="tabs"></div><div id="tabcontent"></div></div>
@@ -125,7 +125,7 @@ async function refreshUsage(){try{const r=await fetch('/api/usage'); if(!r.ok)re
 refreshUsage();
 async function analyze(){
  const url=document.getElementById('fileUrl').value.trim();
- if(!url)return alert('Paste a GitHub file URL');
+ if(!url)return alert('Paste a GitHub or GitLab file URL');
  const btn=document.getElementById('analyzeBtn');
  btn.disabled=true;
  steps('run');
@@ -172,7 +172,7 @@ function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) 
 function fileTable(rows){return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>Size</th><th>Hashes</th><th>VT Verdict</th><th>Link</th></tr>${rows.map(fileRow).join('')||'<tr><td colspan="6">No files listed.</td></tr>'}</table></div>`}
 function groupedFilesHtml(j){const files=j.files||[];const root=files.filter(x=>!x.parent_archive);const children=files.filter(x=>x.parent_archive);const groups={};children.forEach(x=>{const p=x.parent_archive||'Extracted Children';(groups[p] ||= []).push(x)});
 let html=`<div class="toolbar"><div><b>File Inventory</b><div class="small">Grouped by root archive / parent archive. Every file is hashed and checked against VT when configured.</div></div><input class="filter" id="fileFilter" oninput="filterFiles()" placeholder="Filter files..."/></div>`;
-html+=`<div class="group"><div class="group-head"><div><div class="group-title">Root File</div><div class="group-meta">Original GitHub-hosted file submitted to RepoTriage</div></div><span class="badge ${root.some(x=>String(x.vt_verdict).includes('malicious'))?'bad':'ok'}">${root.length} file</span></div><div style="padding:14px">${fileTable(root)}</div></div>`;
+html+=`<div class="group"><div class="group-head"><div><div class="group-title">Root File</div><div class="group-meta">Original remote-hosted file submitted to RepoTriage</div></div><span class="badge ${root.some(x=>String(x.vt_verdict).includes('malicious'))?'bad':'ok'}">${root.length} file</span></div><div style="padding:14px">${fileTable(root)}</div></div>`;
 Object.entries(groups).forEach(([parent,rows],idx)=>{const mal=rows.filter(x=>String(x.vt_verdict).toLowerCase().includes('malicious')).length; const arc=rows.filter(x=>x.is_archive).length; html+=`<div class="group file-group"><div class="group-head"><div><div class="group-title">Children of Archive ${idx+1}</div><div class="group-meta mono">${esc(parent)}</div></div><div><span class="badge">${rows.length} files</span><span class="badge ${mal?'bad':'ok'}">${mal} malicious</span>${arc?`<span class="badge warn">${arc} nested archive(s)</span>`:''}</div></div><div style="padding:14px">${fileTable(rows)}</div></div>`});
 if((j.extraction?.errors||[]).length){html+=`<h3 class="subhead">Extraction Issues</h3><div class="tablewrap"><table class="filetable"><tr><th>Issue</th></tr>${(j.extraction.errors||[]).map(e=>`<tr><td class="err mono">${esc(e)}</td></tr>`).join('')}</table></div>`} return html}
 function filterFiles(){const q=(document.getElementById('fileFilter')?.value||'').toLowerCase();document.querySelectorAll('.filetable tr').forEach((tr,i)=>{if(i===0)return;tr.style.display=tr.innerText.toLowerCase().includes(q)?'':'none'})}

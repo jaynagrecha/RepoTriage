@@ -9,7 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.main import _public_result, _public_job, get_client_ip, APP_VERSION  # noqa: E402
-from app.modules.downloader import _allowed_download_host  # noqa: E402
+from app.modules.downloader import (
+    _allowed_download_host,
+    normalize_file_url,
+    normalize_gitlab_file_url,
+    normalize_github_file_url,
+)  # noqa: E402
 from app.modules.extractor import _read_limited, ExtractionError  # noqa: E402
 from app.modules.ioc_extractor import extract_iocs_from_file, classify_infrastructure  # noqa: E402
 from app.modules.narrative import _risk_level  # noqa: E402
@@ -39,6 +44,55 @@ class TestDownloaderHosts(unittest.TestCase):
         self.assertTrue(_allowed_download_host('raw.githubusercontent.com'))
         self.assertTrue(_allowed_download_host('objects.githubusercontent.com'))
         self.assertFalse(_allowed_download_host('evil.example.com'))
+
+    def test_gitlab_hosts_allowed(self):
+        self.assertTrue(_allowed_download_host('gitlab.com'))
+        self.assertTrue(_allowed_download_host('www.gitlab.com'))
+
+
+class TestGitLabUrlNormalization(unittest.TestCase):
+    def test_gitlab_blob_url(self):
+        url = 'https://gitlab.com/acme/security/tools/-/blob/main/samples/payload.zip'
+        meta = normalize_gitlab_file_url(url)
+        self.assertEqual(meta['provider'], 'gitlab')
+        self.assertEqual(meta['project'], 'acme/security/tools')
+        self.assertEqual(meta['ref'], 'main')
+        self.assertEqual(meta['path'], 'samples/payload.zip')
+        self.assertEqual(
+            meta['download_url'],
+            'https://gitlab.com/acme/security/tools/-/raw/main/samples/payload.zip',
+        )
+
+    def test_gitlab_raw_url(self):
+        url = 'https://gitlab.com/group/project/-/raw/develop/bin/tool.exe'
+        meta = normalize_gitlab_file_url(url)
+        self.assertEqual(meta['source_type'], 'gitlab_raw')
+        self.assertEqual(meta['download_url'], url)
+
+    def test_gitlab_refs_heads_branch(self):
+        url = 'https://gitlab.com/org/repo/-/blob/refs/heads/main/path/file.bin'
+        meta = normalize_gitlab_file_url(url)
+        self.assertEqual(meta['ref'], 'refs/heads/main')
+        self.assertEqual(meta['path'], 'path/file.bin')
+
+    def test_normalize_file_url_routes_gitlab(self):
+        url = 'https://gitlab.com/a/b/-/blob/main/x.zip'
+        meta = normalize_file_url(url)
+        self.assertEqual(meta['provider'], 'gitlab')
+
+    def test_normalize_file_url_routes_github(self):
+        url = 'https://github.com/user/repo/blob/main/x.zip'
+        meta = normalize_file_url(url)
+        self.assertEqual(meta['provider'], 'github')
+
+    @patch.dict(os.environ, {'GITLAB_BASE_URL': 'https://gitlab.example.com'})
+    def test_self_hosted_gitlab_base_url(self):
+        url = 'https://gitlab.example.com/team/app/-/blob/main/file.zip'
+        meta = normalize_gitlab_file_url(url)
+        self.assertEqual(
+            meta['download_url'],
+            'https://gitlab.example.com/team/app/-/raw/main/file.zip',
+        )
 
 
 class TestExtractorReadLimit(unittest.TestCase):

@@ -1,8 +1,23 @@
-# RepoTriage v2.2B.1
+# RepoTriage v2.2B.4
 
-GitHub Payload Intelligence Platform — public job-based GitHub file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping and result-only browser output.
+GitHub and GitLab Payload Intelligence Platform — public job-based file URL analysis with server-side acquisition, hashing, extraction, VT enrichment, AbuseCH CTI, MITRE mapping and result-only browser output.
 
 ## Changelog
+
+### v2.2B.4 — GitLab file URL support
+
+- Accept GitLab blob and raw file URLs (`/-/blob/` and `/-/raw/` paths), including nested group projects.
+- Optional `GITLAB_TOKEN` for private GitLab repositories (`PRIVATE-TOKEN` header).
+- Optional `GITLAB_BASE_URL` for self-hosted GitLab instances.
+- Download redirect validation extended to allowed GitLab hosts.
+- UI and API examples updated for GitHub + GitLab URLs.
+
+**New environment variables**
+
+```env
+GITLAB_TOKEN=
+GITLAB_BASE_URL=
+```
 
 ### v2.2B.3 — Mobile layout and touch support
 
@@ -27,6 +42,7 @@ GitHub Payload Intelligence Platform — public job-based GitHub file URL analys
 - `TRUST_PROXY=false` by default; enable only when running behind a trusted reverse proxy.
 - Rate-limit counters use file locking to reduce concurrent write races.
 - GitHub downloads validate the final redirect host stays on GitHub / `*.githubusercontent.com`.
+- GitLab downloads validate redirects stay on allowed GitLab hosts (`gitlab.com` or `GITLAB_BASE_URL`).
 - API responses no longer expose `local_path`, `extract_dir`, or `client_ip`.
 
 **Reliability**
@@ -65,7 +81,7 @@ VT_CONCURRENT_LIMIT=5
 ---
 
 - Public worker-style analysis flow
-- Browser submits only GitHub file URLs; sample bytes are never returned to the browser
+- Browser submits GitHub or GitLab file URLs; sample bytes are never returned to the browser
 - Async job creation and polling API
 - Server-side quarantine storage and TTL-ready job result storage
 - Automatic MITRE ATT&CK mapping from:
@@ -85,7 +101,7 @@ VT_CONCURRENT_LIMIT=5
 
 ## Existing Capabilities
 
-- GitHub file acquisition
+- GitHub and GitLab file acquisition
 - Root file hashing
 - Recursive archive extraction
 - Child file hashing
