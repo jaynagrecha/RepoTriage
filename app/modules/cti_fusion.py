@@ -478,7 +478,13 @@ def export_stix(result: dict) -> dict:
     ts=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     for f in result.get('files') or []:
         if f.get('sha256'):
-            objs.append({'type':'file','spec_version':'2.1','id':'file--'+str(f.get('sha256'))[:32], 'hashes':{'SHA-256':f.get('sha256')}, 'name':f.get('original_name') or f.get('filename')})
+            objs.append({
+                'type': 'file',
+                'spec_version': '2.1',
+                'id': 'file--' + uuid_like(f.get('sha256')),
+                'hashes': {'SHA-256': f.get('sha256')},
+                'name': f.get('original_name') or f.get('filename'),
+            })
     for typ in ('domains','ips','urls'):
         for val in _as_list((result.get('iocs') or {}).get(typ)):
             stix_type={'domains':'domain-name','ips':'ipv4-addr','urls':'url'}[typ]

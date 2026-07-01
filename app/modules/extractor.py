@@ -26,8 +26,24 @@ WINDOWS_RESERVED = {
 }
 INVALID_WIN_CHARS = r'<>:"/\\|?*'
 
+
 class ExtractionError(Exception):
     pass
+
+
+def _read_limited(stream, max_bytes: int) -> bytes:
+    """Read stream in chunks, enforcing a hard decompressed-size ceiling."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = stream.read(1024 * 256)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ExtractionError('Archive member exceeds extraction byte limit during read')
+        chunks.append(chunk)
+    return b''.join(chunks)
 
 
 def is_archive(path: str | Path) -> bool:
@@ -201,7 +217,7 @@ def _extract_zip(path: Path, out_dir: Path, max_files: int, max_total_bytes: int
                 if total > max_total_bytes:
                     raise ExtractionError('Archive extraction byte limit exceeded')
                 with z.open(info) as src:
-                    data = src.read()
+                    data = _read_limited(src, max_total_bytes)
                 rec = _record_from_bytes(data=data, original=original, source_archive=path, out_dir=out_dir, errors=errors)
                 extracted.append(rec)
             except Exception as e:
@@ -230,7 +246,7 @@ def _extract_tar(path: Path, out_dir: Path, max_files: int, max_total_bytes: int
                 if src is None:
                     raise ExtractionError('Could not open tar member')
                 with src:
-                    data = src.read()
+                    data = _read_limited(src, max_total_bytes)
                 rec = _record_from_bytes(data=data, original=original, source_archive=path, out_dir=out_dir, errors=errors)
                 extracted.append(rec)
             except Exception as e:
@@ -259,7 +275,7 @@ def _extract_rar(path: Path, out_dir: Path, max_files: int, max_total_bytes: int
                 if total > max_total_bytes:
                     raise ExtractionError('Archive extraction byte limit exceeded')
                 with r.open(info) as src:
-                    data = src.read()
+                    data = _read_limited(src, max_total_bytes)
                 rec = _record_from_bytes(data=data, original=original, source_archive=path, out_dir=out_dir, errors=errors)
                 extracted.append(rec)
             except Exception as e:
@@ -292,6 +308,8 @@ def _extract_7z(path: Path, out_dir: Path, max_files: int, max_total_bytes: int,
                 if total > max_total_bytes:
                     raise ExtractionError('Archive extraction byte limit exceeded')
                 data = f.read_bytes()
+                if len(data) > max_total_bytes:
+                    raise ExtractionError('Archive member exceeds extraction byte limit during read')
                 rec = _record_from_bytes(data=data, original=original, source_archive=path, out_dir=out_dir, errors=errors)
                 extracted.append(rec)
             except Exception as e:

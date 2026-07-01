@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover — non-Unix platforms
+    fcntl = None  # type: ignore[assignment]
 
 
 class RateLimitExceeded(Exception):
@@ -67,6 +73,31 @@ class UsageLimiter:
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.usage_file)
 
+    @contextmanager
+    def _locked_usage(self):
+        """Serialize read-modify-write on the usage file (best-effort on local disk)."""
+        self.usage_dir.mkdir(parents=True, exist_ok=True)
+        if not self.usage_file.exists():
+            self.usage_file.write_text(json.dumps({"ips": {}}, indent=2), encoding="utf-8")
+        with self.usage_file.open("r+", encoding="utf-8") as handle:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                handle.seek(0)
+                raw = handle.read()
+                try:
+                    data = json.loads(raw) if raw.strip() else {"ips": {}}
+                except Exception:
+                    data = {"ips": {}}
+                yield data
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps(data, indent=2, ensure_ascii=False))
+                handle.flush()
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
     def get_status(self, ip: str, active_jobs: int = 0, is_admin: bool = False) -> dict[str, Any]:
         data = self._load()
         rec = (data.get("ips") or {}).get(ip, {})
@@ -98,32 +129,33 @@ class UsageLimiter:
 
         now = self._now()
         today = self._today()
-        data = self._load()
-        ips = data.setdefault("ips", {})
-        rec = ips.setdefault(ip, {"daily": {}, "recent": []})
-        rec["recent"] = [float(t) for t in rec.get("recent", []) if now - float(t) <= 60]
-        used_today = int(rec.setdefault("daily", {}).get(today, 0))
 
-        if active_jobs >= self.max_running_per_ip:
-            raise RateLimitExceeded(
-                f"Too many analyses are already running for this IP. Limit: {self.max_running_per_ip}.",
-                self.get_status(ip, active_jobs, is_admin),
-            )
+        with self._locked_usage() as data:
+            ips = data.setdefault("ips", {})
+            rec = ips.setdefault(ip, {"daily": {}, "recent": []})
+            rec["recent"] = [float(t) for t in rec.get("recent", []) if now - float(t) <= 60]
+            used_today = int(rec.setdefault("daily", {}).get(today, 0))
 
-        if len(rec["recent"]) >= self.burst_limit:
-            raise RateLimitExceeded(
-                f"Burst limit reached. Try again in about a minute. Limit: {self.burst_limit}/minute.",
-                self.get_status(ip, active_jobs, is_admin),
-            )
+            if active_jobs >= self.max_running_per_ip:
+                raise RateLimitExceeded(
+                    f"Too many analyses are already running for this IP. Limit: {self.max_running_per_ip}.",
+                    self.get_status(ip, active_jobs, is_admin),
+                )
 
-        if used_today >= self.free_daily_limit:
-            raise RateLimitExceeded(
-                f"Daily free analysis limit reached. Limit: {self.free_daily_limit}/day.",
-                self.get_status(ip, active_jobs, is_admin),
-            )
+            if len(rec["recent"]) >= self.burst_limit:
+                raise RateLimitExceeded(
+                    f"Burst limit reached. Try again in about a minute. Limit: {self.burst_limit}/minute.",
+                    self.get_status(ip, active_jobs, is_admin),
+                )
 
-        rec["recent"].append(now)
-        rec["daily"][today] = used_today + 1
-        rec["last_seen"] = now
-        self._save(data)
+            if used_today >= self.free_daily_limit:
+                raise RateLimitExceeded(
+                    f"Daily free analysis limit reached. Limit: {self.free_daily_limit}/day.",
+                    self.get_status(ip, active_jobs, is_admin),
+                )
+
+            rec["recent"].append(now)
+            rec["daily"][today] = used_today + 1
+            rec["last_seen"] = now
+
         return self.get_status(ip, active_jobs, is_admin)

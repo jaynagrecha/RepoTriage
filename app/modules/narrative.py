@@ -122,11 +122,8 @@ def _risk_level(result: dict) -> str:
     suspicious=len(_suspicious_files(result))
     infra=_infra_counts(result)
     cti=(result.get('threat_intel') or {}).get('abusech') or {}
-    abuse_matches=sum([
-        int(((cti.get('threatfox') or {}).get('matches') or 0) if isinstance(cti.get('threatfox'), dict) else 0),
-        int(((cti.get('malwarebazaar') or {}).get('matches') or 0) if isinstance(cti.get('malwarebazaar'), dict) else 0),
-        int(((cti.get('urlhaus') or {}).get('matches') or 0) if isinstance(cti.get('urlhaus'), dict) else 0),
-    ])
+    match_counts = cti.get('matches') or {}
+    abuse_matches = sum(int(match_counts.get(k) or 0) for k in ('threatfox', 'malwarebazaar', 'urlhaus'))
     if malicious >= 2 or infra['probable_c2'] or abuse_matches >= 3:
         return 'Critical'
     if malicious == 1 or suspicious or infra['payload_delivery'] or infra['malware_downloads']:

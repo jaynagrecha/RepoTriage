@@ -20,29 +20,51 @@
   details.rel{margin:8px 0;border:1px solid var(--border);border-radius:12px;padding:8px;background:#061018}details.rel summary{cursor:pointer;color:var(--accent)}.graphwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px}.nodebox{border:1px solid var(--border);background:#061018;border-radius:12px;padding:10px;margin:6px 0}.nodebox.sample{border-color:#42e8b4}.nodebox.family{border-color:#ffd166}.nodebox.infrastructure{border-color:#ff6262}.edge{font-size:12px;color:var(--muted);margin-left:14px}.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.btnrow button{padding:10px 12px}
     .graphcanvas{position:relative;min-height:620px;background:radial-gradient(circle at center,#0b2632 0,#061018 70%);border:1px solid var(--border);border-radius:18px;overflow:hidden}
     .graphsvg{width:100%;height:620px;display:block}
-    .g-node{cursor:pointer;filter:drop-shadow(0 8px 16px rgba(0,0,0,.35))}.g-node circle{stroke-width:2}.g-label{font-size:12px;font-weight:800;fill:#e9f6fb;paint-order:stroke;stroke:#061018;stroke-width:4px;stroke-linejoin:round}.g-sub{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.g-edge{stroke:#2b5a6d;stroke-width:1.6;opacity:.85}.g-edge-label{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:11px;height:11px;border-radius:50%;display:inline-block}.detailpane{margin-top:12px;background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px}.graph-note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 12px}
+    .g-node{cursor:pointer;filter:drop-shadow(0 8px 16px rgba(0,0,0,.35))}.g-node circle{stroke-width:2}.g-label{font-size:12px;font-weight:800;fill:#e9f6fb;paint-order:stroke;stroke:#061018;stroke-width:4px;stroke-linejoin:round}.g-sub{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.g-edge{stroke:#2b5a6d;stroke-width:1.6;opacity:.85}.g-edge-label{font-size:10px;fill:#8da6b3;paint-order:stroke;stroke:#061018;stroke-width:3px}.legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:11px;height:11px;border-radius:50%;display:inline-block}.detailpane{margin-top:12px;background:#061018;border:1px solid var(--border);border-radius:14px;padding:12px}    .graph-note{font-size:13px;color:var(--muted);line-height:1.45;margin:8px 0 12px}
+    .iocbox{border:1px solid var(--border);background:#061018;border-radius:14px;padding:12px;margin:8px 0}
+    .iocitem{padding:8px 0;border-bottom:1px solid var(--border)}
+    .iocitem:last-child{border-bottom:0}
+    .usagebar{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:13px;color:var(--muted)}
+    .usagebar b{color:var(--text)}
+    .tab-sep{width:1px;height:28px;background:var(--border);align-self:center;margin:0 2px}
+    .tab-section{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .tab-section-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:0 4px}
+    button:disabled{opacity:.55;cursor:not-allowed}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B CTI UX Polish</div></div>
-    <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub file URL: https://github.com/user/repo/blob/main/payload.zip"/><button onclick="analyze()">Analyze</button></div><div class="small">v2.2B improves analyst reporting, adds a real interactive infrastructure graph, removes duplicated report sections, and separates system notes from analyst actions. Browser submits only a GitHub file URL; backend/worker downloads and analyzes samples server-side and returns metadata/results only. In local-dev mode, your machine is still the backend.</div><div id="status" class="status"></div></div>
+    <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>GitHub Payload Intelligence Platform — GitHub file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v2.2B.1</div></div>
+    <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub file URL: https://github.com/user/repo/blob/main/payload.zip"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub file URL for server-side analysis. The browser receives metadata and CTI results only — never sample bytes. Set KEEP_QUARANTINE=true on the backend to retain samples for local debugging.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
       <div class="panel"><div class="tabs" id="tabs"></div><div id="tabcontent"></div></div>
     </div>
   </div>
 <script>
-const tabNames=['Overview','Files','CTI Summary','Campaign Analysis','Threat Actor','Correlation Matrix','Infrastructure Graph','Related Samples','Exports','Analyst Report','VirusTotal','AbuseCH','ThreatFox','MalwareBazaar','URLHaus','Feodo','SSLBL','Infrastructure','MITRE ATT&CK','Attack Narrative','Executive Summary','Raw JSON'];let current=null;let currentJobId=null;
+const tabGroups=[
+  {label:'Summary',tabs:['Overview','Files','Executive Summary']},
+  {label:'CTI Fusion',tabs:['CTI Summary','Campaign Analysis','Threat Actor','Correlation Matrix','Infrastructure Graph','Related Samples']},
+  {label:'Intel Sources',tabs:['VirusTotal','AbuseCH','ThreatFox','MalwareBazaar','URLHaus','Feodo','SSLBL','Infrastructure']},
+  {label:'Reporting',tabs:['Exports','Analyst Report','Attack Narrative','MITRE ATT&CK','Raw JSON']}
+];
+const tabNames=tabGroups.flatMap(g=>g.tabs);
+let current=null;let currentJobId=null;
+function apiDetail(err){if(!err)return''; if(typeof err==='string')return err; if(err.message)return err.message; if(typeof err==='object')return err.message||JSON.stringify(err); return String(err)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function verdictClass(v){v=String(v||'').toLowerCase(); if(v.includes('malicious'))return 'bad'; if(v.includes('suspicious'))return 'warn'; if(v.includes('clean'))return 'ok'; return ''}
 function fmtBytes(n){n=Number(n||0); if(!n)return '0 B'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return `${n.toFixed(i?1:0)} ${u[i]}`}
 function shortHash(h){h=String(h||''); return h?`${h.slice(0,12)}…${h.slice(-10)}`:'-'}
+function fullHash(h){return esc(h||'-')}
 function vtBadge(v){return `<span class="badge ${verdictClass(v)}">${esc(v||'unknown')}</span>`}
-function steps(mode){const el=document.getElementById('status'); const names=['Downloaded','SHA256 Generated','VT Checked','Archive Extracted','Children VT Checked','IOCs Extracted','ThreatFox Queried','MalwareBazaar Queried','URLHaus Queried','Feodo/SSLBL Checked','Executive Summary Generated'];el.innerHTML=names.map((n,i)=>`<span class="step ${mode==='done'||i<8?'done':(mode==='run'?'todo':'')}">${mode==='run'&&i>=8?'○':'✓'} ${n}</span>`).join('')}
+function steps(mode){const el=document.getElementById('status'); const names=['Downloaded','SHA256 Generated','VT Checked','Archive Extracted','Children VT Checked','IOCs Extracted','ThreatFox Queried','MalwareBazaar Queried','URLHaus Queried','Feodo/SSLBL Checked','Executive Summary Generated']; if(mode!=='done'){el.innerHTML='<span class="step todo">○ Analysis in progress — pipeline running server-side…</span>'; return} el.innerHTML=names.map((n)=>`<span class="step done">✓ ${n}</span>`).join('')}
+async function refreshUsage(){try{const r=await fetch('/api/usage'); if(!r.ok)return; const u=await r.json(); const el=document.getElementById('usage'); if(!el)return; if(!u.enabled){el.innerHTML='<span>Usage limits: disabled</span>'; return} const rem=u.remaining_today; el.innerHTML=`<span>Daily quota: <b>${esc(u.used_today)}</b> / ${esc(u.free_daily_limit)} used</span><span>Remaining: <b>${rem==null?'∞':esc(rem)}</b></span><span>Active jobs: <b>${esc(u.active_jobs_for_ip||0)}</b> / ${esc(u.max_running_jobs_per_ip||2)}</span>`}catch(_){}}
+refreshUsage();
 async function analyze(){
  const url=document.getElementById('fileUrl').value.trim();
  if(!url)return alert('Paste a GitHub file URL');
+ const btn=document.getElementById('analyzeBtn');
+ btn.disabled=true;
  steps('run');
  document.getElementById('results').style.display='none';
  const st=document.getElementById('status');
@@ -50,21 +72,23 @@ async function analyze(){
    st.innerHTML='<span class="step todo">○ Creating server-side analysis job...</span>';
    const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_url:url})});
    const j=await r.json();
-   if(!r.ok)throw new Error(j.detail||'Job creation failed');
+   if(!r.ok)throw new Error(apiDetail(j.detail)||'Job creation failed');
+   refreshUsage();
    const jobId=j.job_id; currentJobId=jobId;
    let attempts=0;
-   const maxAttempts=240; // roughly 4 minutes at 1s polling
+   const maxAttempts=480;
    while(attempts<maxAttempts){
      attempts++;
      const pr=await fetch(`/api/jobs/${jobId}`);
      const pj=await pr.json();
-     if(!pr.ok)throw new Error(pj.detail||'Job polling failed');
+     if(!pr.ok)throw new Error(apiDetail(pj.detail)||'Job polling failed');
      st.innerHTML=`<span class="step todo">○ Job ${esc(jobId.slice(0,8))}: ${esc(pj.status)} · ${esc(pj.stage||'')}</span>`;
      if(pj.status==='completed'){
        current=pj.result;
        steps('done');
        render(pj.result);
        document.getElementById('results').scrollIntoView({behavior:'smooth'});
+       refreshUsage();
        return;
      }
      if(pj.status==='failed') throw new Error(pj.error||'Analysis job failed');
@@ -72,12 +96,15 @@ async function analyze(){
    }
    throw new Error('Analysis timed out waiting for worker result');
  }catch(e){document.getElementById('status').innerHTML=`<span class="err">${esc(e.message)}</span>`}
+ finally{btn.disabled=false; refreshUsage()}
 }
 function render(j){document.getElementById('results').style.display='block';const f=j.root_file||{}, fs=j.file_stats||{}, c=j.cti_dashboard||{}, ca=j.campaign_analysis||{}, ta=j.threat_actor_assessment||{};document.getElementById('cards').innerHTML=`<div class="card"><div class="k">Overall Risk</div><div class="v ${c.risk==='Critical'||c.risk==='High'?'err':(c.risk==='Medium'?'pending':'ok')}">${esc(c.risk||j.vt?.verdict||'unknown')}</div></div><div class="card"><div class="k">Primary Family</div><div class="v">${esc(c.primary_family||j.family?.name||'Unknown')}</div></div><div class="card"><div class="k">Campaign</div><div class="v">${esc(ca.candidate||'Unknown')}</div><div class="small">${esc(ca.confidence_band||'Low')} · ${esc(ca.confidence_score||0)}%</div></div><div class="card"><div class="k">Threat Actor</div><div class="v">${esc(ta.primary_assessment||'Unknown')}</div><div class="small">${esc(ta.confidence_band||'Low')} · ${esc(ta.confidence_score||0)}%</div></div><div class="card"><div class="k">Malicious Files</div><div class="v ${fs.malicious?'err':''}">${esc(fs.malicious||0)}</div><div class="small">${esc(fs.total_listed||1)} total listed</div></div>`
-const tabs=document.getElementById('tabs');tabs.innerHTML=tabNames.map((t,i)=>`<button class="tab ${i==0?'active':''}" onclick="showTab(${i})">${t}</button>`).join('');document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');}
+const tabs=document.getElementById('tabs');
+tabs.innerHTML=tabGroups.map(g=>`<div class="tab-section"><span class="tab-section-label">${esc(g.label)}</span>${g.tabs.map(t=>{const i=tabNames.indexOf(t); return `<button class="tab ${i==0?'active':''}" data-tab="${i}" onclick="showTab(${i})">${esc(t)}</button>`}).join('')}<span class="tab-sep"></span></div>`).join('');
+document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');}
 function showTab(i){document.querySelectorAll('.tab').forEach((e,n)=>e.classList.toggle('active',n===i));document.querySelectorAll('.tabbody').forEach((e,n)=>e.classList.toggle('active',n===i))}
 function displayName(x){return x.original_name || x.filename || x.path || 'file'}
-function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) sub.push(x.filename); if(x.stored_name) sub.push('stored as: '+x.stored_name); if(x.blocked_by_local_av) sub.push('local AV blocked/quarantined storage; hash captured in-memory'); if(x.analysis_note) sub.push(x.analysis_note); return `<tr><td><div class="file-path">${esc(displayName(x))}</div><div class="file-sub">${esc(sub.join(' · '))}</div></td><td>${esc(x.file_type||'-')}</td><td>${fmtBytes(x.size_bytes)}</td><td class="hashcell mono"><div class="hashline"><span class="hashlabel">MD5</span><span class="hashval">${esc(shortHash(x.md5))}</span></div><div class="hashline"><span class="hashlabel">SHA1</span><span class="hashval">${esc(shortHash(x.sha1))}</span></div><div class="hashline"><span class="hashlabel">SHA256</span><span class="hashval">${esc(shortHash(x.sha256))}</span></div></td><td>${vtBadge(x.vt_verdict)}<div class="file-sub">${Number(x.vt_malicious||0)} malicious / ${Number(x.vt_suspicious||0)} suspicious</div></td><td>${x.vt_link?`<a href="${esc(x.vt_link)}" target="_blank">VT Report</a>`:'-'}</td></tr>`}
+function fileRow(x){const sub=[]; if(x.filename && x.filename!==displayName(x)) sub.push(x.filename); if(x.stored_name) sub.push('stored as: '+x.stored_name); if(x.blocked_by_local_av) sub.push('local AV blocked/quarantined storage; hash captured in-memory'); if(x.analysis_note) sub.push(x.analysis_note); return `<tr><td><div class="file-path">${esc(displayName(x))}</div><div class="file-sub">${esc(sub.join(' · '))}</div></td><td>${esc(x.file_type||'-')}</td><td>${fmtBytes(x.size_bytes)}</td><td class="hashcell mono"><div class="hashline"><span class="hashlabel">MD5</span><span class="hashval" title="${fullHash(x.md5)}">${esc(shortHash(x.md5))}</span></div><div class="hashline"><span class="hashlabel">SHA1</span><span class="hashval" title="${fullHash(x.sha1)}">${esc(shortHash(x.sha1))}</span></div><div class="hashline"><span class="hashlabel">SHA256</span><span class="hashval" title="${fullHash(x.sha256)}">${esc(shortHash(x.sha256))}</span></div></td><td>${vtBadge(x.vt_verdict)}<div class="file-sub">${Number(x.vt_malicious||0)} malicious / ${Number(x.vt_suspicious||0)} suspicious</div></td><td>${x.vt_link?`<a href="${esc(x.vt_link)}" target="_blank">VT Report</a>`:'-'}</td></tr>`}
 function fileTable(rows){return `<div class="tablewrap"><table class="filetable"><tr><th>File</th><th>Type</th><th>Size</th><th>Hashes</th><th>VT Verdict</th><th>Link</th></tr>${rows.map(fileRow).join('')||'<tr><td colspan="6">No files listed.</td></tr>'}</table></div>`}
 function groupedFilesHtml(j){const files=j.files||[];const root=files.filter(x=>!x.parent_archive);const children=files.filter(x=>x.parent_archive);const groups={};children.forEach(x=>{const p=x.parent_archive||'Extracted Children';(groups[p] ||= []).push(x)});
 let html=`<div class="toolbar"><div><b>File Inventory</b><div class="small">Grouped by root archive / parent archive. Every file is hashed and checked against VT when configured.</div></div><input class="filter" id="fileFilter" oninput="filterFiles()" placeholder="Filter files..."/></div>`;
@@ -216,17 +243,17 @@ function buildGraphLayout(nodes, edges){
 }
 function infraGraphHtml(j){
   const g=j.infrastructure_graph||{nodes:[],edges:[]}; const nodes=g.nodes||[], edges=g.edges||[]; const layout=buildGraphLayout(nodes,edges); const edgeSvg=edges.slice(0,280).map(e=>{const a=layout.map[e.from],b=layout.map[e.to]; if(!a||!b)return ''; const mx=(a.x+b.x)/2,my=(a.y+b.y)/2; return `<line class="g-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line><text class="g-edge-label" x="${mx}" y="${my}">${esc(compactLabel(e.label,18))}</text>`}).join('');
-  const nodeSvg=layout.nodes.map(n=>{const col=graphColor(n.type,n.severity); const subtitle=n.type==='file'?(n.meta?.verdict||'file'):(n.type==='family'?'family':n.type); const safeId=String(n.id).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); return `<g class="g-node" onclick="showGraphNode('${safeId}')"><circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${col}22" stroke="${col}"></circle><text class="g-label" text-anchor="middle" x="${n.x}" y="${n.y-2}">${esc(compactLabel(n.label,22))}</text><text class="g-sub" text-anchor="middle" x="${n.x}" y="${n.y+15}">${esc(compactLabel(subtitle,18))}</text></g>`}).join('');
-  window.__graphNodes={}; nodes.forEach(n=>window.__graphNodes[n.id]=n);
+  window.__graphNodes={}; layout.nodes.forEach((n,i)=>{window.__graphNodes[i]=n});
   return `<div class="cards"><div class="card"><div class="k">Nodes</div><div class="v">${esc(g.summary?.nodes||nodes.length)}</div></div><div class="card"><div class="k">Relationships</div><div class="v">${esc(g.summary?.edges||edges.length)}</div></div><div class="card"><div class="k">Families</div><div class="v">${esc((g.summary?.by_type||{}).family||0)}</div></div><div class="card"><div class="k">Files</div><div class="v">${esc((g.summary?.by_type||{}).file||0)}</div></div><div class="card"><div class="k">Infrastructure</div><div class="v">${esc((g.summary?.by_type||{}).infrastructure||0)}</div></div></div>
   <div class="graph-note">This graph is designed for quick interpretation: the root GitHub sample is centered, extracted files, malware families, IOCs, and enriched infrastructure are arranged around it. Click any node to inspect details.</div>
   <div class="legend"><span><i class="dot" style="background:#42e8b4"></i>Sample</span><span><i class="dot" style="background:#ff6262"></i>Malicious file</span><span><i class="dot" style="background:#ffd166"></i>Family</span><span><i class="dot" style="background:#82d4ff"></i>Domain</span><span><i class="dot" style="background:#c792ea"></i>URL</span><span><i class="dot" style="background:#ff8a65"></i>Enriched infrastructure</span></div>
-  <div class="graphcanvas"><svg class="graphsvg" viewBox="0 0 ${layout.w} ${layout.h}" preserveAspectRatio="xMidYMid meet">${edgeSvg}${nodeSvg}</svg></div><div id="graphDetail" class="detailpane">Click a node to view details.</div>
+  <div class="graphcanvas"><svg class="graphsvg" viewBox="0 0 ${layout.w} ${layout.h}" preserveAspectRatio="xMidYMid meet">${edgeSvg}${layout.nodes.map((n,i)=>{const col=graphColor(n.type,n.severity); const subtitle=n.type==='file'?(n.meta?.verdict||'file'):(n.type==='family'?'family':n.type); return `<g class="g-node" data-node-idx="${i}"><circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${col}22" stroke="${col}"></circle><text class="g-label" text-anchor="middle" x="${n.x}" y="${n.y-2}">${esc(compactLabel(n.label,22))}</text><text class="g-sub" text-anchor="middle" x="${n.x}" y="${n.y+15}">${esc(compactLabel(subtitle,18))}</text></g>`}).join('')}</svg></div><div id="graphDetail" class="detailpane">Click a node to view details.</div>
   <h3 class="subhead">Relationship Edges</h3><div class="tablewrap"><table class="filetable"><tr><th>From</th><th>Relationship</th><th>To</th><th>Source</th></tr>${edges.slice(0,400).map(e=>`<tr><td class="mono">${esc(e.from)}</td><td>${esc(e.label)}</td><td class="mono">${esc(e.to)}</td><td>${esc(e.source||'-')}</td></tr>`).join('')||'<tr><td colspan="4">No graph relationships built.</td></tr>'}</table></div>`
 }
-function showGraphNode(id){
-  const n=(window.__graphNodes||{})[id]; if(!n)return; const meta=n.meta||{}; document.getElementById('graphDetail').innerHTML=`<b>${esc(n.label)}</b><div class="small">Type: ${esc(n.type)} · Severity: ${esc(n.severity||'neutral')}</div><pre>${esc(JSON.stringify(meta,null,2))}</pre>`;
+function showGraphNode(idx){
+  const n=(window.__graphNodes||{})[idx]; if(!n)return; const meta=n.meta||{}; document.getElementById('graphDetail').innerHTML=`<b>${esc(n.label)}</b><div class="small">Type: ${esc(n.type)} · Severity: ${esc(n.severity||'neutral')}</div><pre>${esc(JSON.stringify(meta,null,2))}</pre>`;
 }
+document.addEventListener('click',(ev)=>{const g=ev.target.closest?.('.g-node'); if(!g)return; const idx=g.getAttribute('data-node-idx'); if(idx!=null)showGraphNode(Number(idx));});
 
 function campaignHtml(j){
   const c=j.campaign_analysis||{}; const ev=c.evidence||[]; const del=c.delivery_mechanisms||[]; const tl=c.timeline||[];

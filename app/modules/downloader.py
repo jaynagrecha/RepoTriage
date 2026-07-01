@@ -7,6 +7,22 @@ import httpx
 class DownloadError(Exception):
     pass
 
+
+ALLOWED_DOWNLOAD_HOSTS = frozenset({
+    'github.com',
+    'www.github.com',
+    'raw.githubusercontent.com',
+    'objects.githubusercontent.com',
+    'codeload.github.com',
+})
+
+
+def _allowed_download_host(host: str) -> bool:
+    host = (host or '').lower().split(':', 1)[0]
+    if host in ALLOWED_DOWNLOAD_HOSTS:
+        return True
+    return host.endswith('.githubusercontent.com')
+
 def normalize_github_file_url(url: str) -> dict:
     url = url.strip()
     parsed = urlparse(url)
@@ -106,6 +122,9 @@ async def download_file(url: str, out_dir: str | Path = 'downloads', max_bytes: 
     downloaded = 0
     async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
         async with client.stream('GET', meta['download_url']) as resp:
+            final_host = urlparse(str(resp.url)).netloc
+            if not _allowed_download_host(final_host):
+                raise DownloadError(f'Download blocked: redirect left GitHub ({final_host})')
             if resp.status_code >= 400:
                 raise DownloadError(f'Download failed: HTTP {resp.status_code}')
             with out_path.open('wb') as f:

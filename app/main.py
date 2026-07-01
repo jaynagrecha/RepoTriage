@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import shutil
 from datetime import datetime, timezone, timedelta
 import asyncio
 import json
@@ -8,7 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .modules.downloader import download_file, DownloadError
 from .modules.hash_engine import hash_file
@@ -28,29 +29,114 @@ from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-app = FastAPI(title='RepoTriage', version='2.2B.0')
+APP_VERSION = '2.2B.1'
+
+app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
 
 USAGE_LIMITER = UsageLimiter(BASE_DIR)
 
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 def get_client_ip(request: Request) -> str:
-    xff = request.headers.get('x-forwarded-for')
-    if xff:
-        return xff.split(',')[0].strip()
-    xrip = request.headers.get('x-real-ip')
-    if xrip:
-        return xrip.strip()
+    if _env_truthy('TRUST_PROXY'):
+        xff = request.headers.get('x-forwarded-for')
+        if xff:
+            return xff.split(',')[0].strip()
+        xrip = request.headers.get('x-real-ip')
+        if xrip:
+            return xrip.strip()
     return request.client.host if request.client else 'unknown'
+
+
+def _strip_local_paths(obj):
+    if isinstance(obj, dict):
+        return {k: _strip_local_paths(v) for k, v in obj.items() if k != 'local_path'}
+    if isinstance(obj, list):
+        return [_strip_local_paths(v) for v in obj]
+    return obj
+
+
+def _public_result(result: dict | None) -> dict | None:
+    if not result:
+        return result
+    sanitized = _strip_local_paths(result)
+    source = sanitized.get('source')
+    if isinstance(source, dict):
+        source = dict(source)
+        source.pop('local_path', None)
+        sanitized['source'] = source
+    extraction = sanitized.get('extraction')
+    if isinstance(extraction, dict):
+        extraction = dict(extraction)
+        extraction.pop('extract_dir', None)
+        sanitized['extraction'] = extraction
+    return sanitized
+
+
+def _public_job(job: dict) -> dict:
+    public = dict(job)
+    public.pop('client_ip', None)
+    if public.get('result'):
+        public['result'] = _public_result(public['result'])
+    return public
+
+
+def _quarantine_targets(meta: dict | None, extraction: dict | None) -> list[Path]:
+    targets: list[Path] = []
+    if meta and meta.get('local_path'):
+        targets.append(Path(meta['local_path']))
+    if extraction and extraction.get('extract_dir'):
+        targets.append(Path(extraction['extract_dir']))
+    return targets
+
+
+def _cleanup_quarantine(meta: dict | None, extraction: dict | None) -> None:
+    if _env_truthy('KEEP_QUARANTINE'):
+        return
+    for target in _quarantine_targets(meta, extraction):
+        try:
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.is_file():
+                target.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 def active_jobs_for_ip(ip: str) -> int:
     count = 0
+    seen_ids: set[str] = set()
     for job in JOBS.values():
         if job.get('client_ip') == ip and job.get('status') in {'queued', 'running'}:
             count += 1
+            if job.get('job_id'):
+                seen_ids.add(job['job_id'])
+    jobs_dir = BASE_DIR / 'data' / 'jobs'
+    for p in jobs_dir.glob('*.json'):
+        try:
+            data = json.loads(p.read_text(encoding='utf-8'))
+            jid = data.get('job_id')
+            if jid and jid in seen_ids:
+                continue
+            if data.get('client_ip') == ip and data.get('status') in {'queued', 'running'}:
+                count += 1
+        except Exception:
+            continue
     return count
 
 class AnalyzeRequest(BaseModel):
     file_url: str = Field(..., examples=['https://github.com/user/repo/blob/main/payload.zip'])
+
+    @field_validator('file_url')
+    @classmethod
+    def strip_file_url(cls, value: str) -> str:
+        return (value or '').strip()
 
 
 def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
@@ -65,13 +151,13 @@ def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
     else:
         vt_line = f"VirusTotal verdict: {verdict} ({malicious} malicious / {suspicious} suspicious)."
     return (
-        f"RepoTriage v2.2A acquired the GitHub-hosted file and calculated MD5/SHA1/SHA256.\n\n"
+        f"RepoTriage {APP_VERSION} acquired the GitHub-hosted file and calculated MD5/SHA1/SHA256.\n\n"
         f"File: {meta.get('filename')}\n"
         f"Type: {file_type}\n"
         f"SHA256: {hashes.get('sha256')}\n\n"
         f"{vt_line}\n"
         f"Family/label: {family}.\n\n"
-        f"Archive extraction is enabled in v1.3. IOC extraction, external CTI, MITRE mapping, and infrastructure discovery are reserved for upcoming versions."
+        f"Archive extraction, IOC extraction, Abuse.ch CTI enrichment, MITRE ATT&CK mapping, and infrastructure classification are enabled in this build."
     )
 
 
@@ -218,7 +304,9 @@ def _load_job(job_id: str) -> dict | None:
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding='utf-8'))
+        job = json.loads(p.read_text(encoding='utf-8'))
+        JOBS[job_id] = job
+        return job
     except Exception:
         return None
 
@@ -239,7 +327,7 @@ async def health():
     return {
         'ok': True,
         'app': 'RepoTriage',
-        'version': '2.2B-rate-limit.0',
+        'version': APP_VERSION,
         'vt_configured': bool(os.getenv('VT_API_KEY')),
         'analysis_mode': os.getenv('ANALYSIS_MODE', 'local_dev'),
         'server_analysis_mode': os.getenv('SERVER_ANALYSIS_MODE', 'false').lower() == 'true',
@@ -255,7 +343,7 @@ async def _run_job(job_id: str, req: AnalyzeRequest) -> None:
     JOBS[job_id].update({'status': 'running', 'stage': 'analysis_started', 'updated_at': now})
     _save_job(job_id)
     try:
-        result = await analyze(req)
+        result = await run_analysis(req)
         JOBS[job_id].update({
             'status': 'completed',
             'stage': 'completed',
@@ -318,7 +406,7 @@ async def get_job(job_id: str):
     job = _load_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail='Job not found')
-    return job
+    return _public_job(job)
 
 
 @app.get('/api/jobs/{job_id}/export/json')
@@ -326,28 +414,28 @@ async def export_job_json(job_id: str):
     job = _load_job(job_id)
     if not job or not job.get('result'):
         raise HTTPException(status_code=404, detail='Completed job result not found')
-    return JSONResponse(job['result'])
+    return JSONResponse(_public_result(job['result']))
 
 @app.get('/api/jobs/{job_id}/export/csv', response_class=PlainTextResponse)
 async def export_job_csv(job_id: str):
     job = _load_job(job_id)
     if not job or not job.get('result'):
         raise HTTPException(status_code=404, detail='Completed job result not found')
-    return PlainTextResponse(export_csv(job['result']), media_type='text/csv')
+    return PlainTextResponse(export_csv(_public_result(job['result']) or {}), media_type='text/csv')
 
 @app.get('/api/jobs/{job_id}/export/stix')
 async def export_job_stix(job_id: str):
     job = _load_job(job_id)
     if not job or not job.get('result'):
         raise HTTPException(status_code=404, detail='Completed job result not found')
-    return JSONResponse(export_stix(job['result']))
+    return JSONResponse(export_stix(_public_result(job['result']) or {}))
 
 @app.get('/api/jobs/{job_id}/export/misp')
 async def export_job_misp(job_id: str):
     job = _load_job(job_id)
     if not job or not job.get('result'):
         raise HTTPException(status_code=404, detail='Completed job result not found')
-    return JSONResponse(export_misp(job['result']))
+    return JSONResponse(export_misp(_public_result(job['result']) or {}))
 
 @app.get('/api/jobs/{job_id}/report/html', response_class=HTMLResponse)
 async def export_job_report_html(job_id: str):
@@ -358,9 +446,27 @@ async def export_job_report_html(job_id: str):
     return HTMLResponse(report.get('html',''))
 
 @app.post('/api/analyze')
-async def analyze(req: AnalyzeRequest):
+async def analyze_endpoint(req: AnalyzeRequest):
+    if not _env_truthy('ALLOW_SYNC_ANALYZE'):
+        raise HTTPException(status_code=404, detail='Not found')
     try:
-        meta = await download_file(req.file_url, BASE_DIR / 'quarantine' / 'downloads')
+        return await run_analysis(req)
+    except VTLookupError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except DownloadError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def run_analysis(req: AnalyzeRequest) -> dict:
+    meta: dict | None = None
+    extraction: dict = {'root_is_archive': False}
+    try:
+        file_url = (req.file_url or '').strip()
+        if not file_url:
+            raise DownloadError('file_url is required')
+        meta = await download_file(file_url, BASE_DIR / 'quarantine' / 'downloads')
         hashes = hash_file(meta['local_path'])
         file_type = guess_file_type(meta['local_path'])
         vt_result = await lookup_file_hash(hashes['sha256'], BASE_DIR)
@@ -406,10 +512,15 @@ async def analyze(req: AnalyzeRequest):
                 max_files=max_files,
                 max_total_bytes=max_extract_bytes,
             )
+            vt_sem = asyncio.Semaphore(int(os.getenv('VT_CONCURRENT_LIMIT', '5')))
+
+            async def _lookup_vt_bounded(sha256: str) -> dict:
+                async with vt_sem:
+                    return await lookup_file_hash(sha256, BASE_DIR)
+
+            pending_children: list[tuple] = []
             for child in extraction.get('files', []):
                 child_path = child.get('local_path')
-                # v1.9.4 metadata-first analysis: every archive member is retained
-                # even if local AV blocks/quarantines the neutral file on disk.
                 try:
                     if child_path and Path(child_path).exists():
                         child_hashes = hash_file(child_path)
@@ -426,7 +537,23 @@ async def analyze(req: AnalyzeRequest):
                         child_iocs = {}
                     if not child_hashes.get('sha256'):
                         raise ValueError('missing SHA256 after extraction')
-                    child_vt = await lookup_file_hash(child_hashes['sha256'], BASE_DIR)
+                    pending_children.append((child, child_path, child_hashes, child_type, child_iocs))
+                except Exception as e:
+                    display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
+                    extraction.setdefault('errors', []).append(f"{display_name}: analysis failed after extraction: {e.__class__.__name__}: {str(e)[:180]}")
+
+            if pending_children:
+                vt_results = await asyncio.gather(
+                    *[_lookup_vt_bounded(item[2]['sha256']) for item in pending_children],
+                    return_exceptions=True,
+                )
+                for (child, child_path, child_hashes, child_type, child_iocs), child_vt in zip(pending_children, vt_results):
+                    if isinstance(child_vt, Exception):
+                        display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
+                        extraction.setdefault('errors', []).append(
+                            f"{display_name}: VT lookup failed: {child_vt.__class__.__name__}: {str(child_vt)[:180]}"
+                        )
+                        continue
                     inventory.append({
                         'filename': child.get('filename'),
                         'original_name': child.get('original_name'),
@@ -450,9 +577,6 @@ async def analyze(req: AnalyzeRequest):
                         'is_archive': child.get('is_archive'),
                         'iocs': child_iocs,
                     })
-                except Exception as e:
-                    display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
-                    extraction.setdefault('errors', []).append(f"{display_name}: analysis failed after extraction: {e.__class__.__name__}: {str(e)[:180]}")
 
         malicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'malicious')
         suspicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'suspicious')
@@ -477,13 +601,17 @@ async def analyze(req: AnalyzeRequest):
         ioc_total = sum(len(v) for k, v in merged_iocs.items() if k != 'ioc_details')
         now = datetime.now(timezone.utc).isoformat()
 
+        vt_configured = vt_result.get('status') not in {'not_configured'}
+        children_vt_done = extracted_count > 0 and vt_configured and any(
+            x.get('vt_verdict') is not None for x in inventory[1:]
+        )
         pipeline = {
             'downloaded': True,
             'hashed': True,
-            'vt_lookup': vt_result.get('status') not in {'not_configured'},
+            'vt_lookup': vt_configured,
             'archive_extraction': bool(extraction.get('root_is_archive')),
             'children_hashed': extracted_count > 0,
-            'children_vt_lookup': extracted_count > 0 and vt_result.get('status') != 'not_configured',
+            'children_vt_lookup': children_vt_done,
             'ioc_extraction': True,
             'threat_intel': True,
             'mitre_mapping': True,
@@ -563,9 +691,9 @@ async def analyze(req: AnalyzeRequest):
         analyst_report = build_analyst_report(preliminary)
         summary += "\n\n---\n\n" + attack_narrative.get('markdown', '')
 
-        return {
+        result = {
             'status': 'completed',
-            'version': '2.2B-rate-limit.0',
+            'version': APP_VERSION,
             'analyzed_at': now,
             'source': meta,
             'root_file': {
@@ -616,9 +744,6 @@ async def analyze(req: AnalyzeRequest):
             'exports_available': ['json', 'csv', 'stix', 'misp', 'html_report'],
             'summary': summary,
         }
-    except VTLookupError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except DownloadError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _public_result(result)
+    finally:
+        _cleanup_quarantine(meta, extraction)
