@@ -35,6 +35,19 @@ PRIVESC_MARKERS = re.compile(
     re.I,
 )
 
+METASPLOIT_MARKERS = re.compile(
+    r'(?:'
+    r'metasploit|meterpreter|msfvenom|msfpayload|Msf::|MetasploitModule|'
+    r"require\s+['\"]msf/core|module\s+requires\s+metasploit|rapid7/metasploit-framework"
+    r')',
+    re.I,
+)
+
+METASPLOIT_MODULE_HEADER = re.compile(
+    r'module\s+requires\s+metasploit|rapid7/metasploit-framework|class\s+MetasploitModule',
+    re.I,
+)
+
 PHONE_FIELD = re.compile(r'(?:\bphone_number\b|\bphoneNumber\b|\bphone_number\b|_phone\d*\s*=|\bmsisdn\b)', re.I)
 DOWNLOAD_EXEC = re.compile(r'(?:downloadstring|downloadfile|invoke-webrequest|curl\s|wget\s|iex\b|eval\s*\()', re.I)
 WEBHOOK_EXFIL = re.compile(r'discord(?:app)?\.com/api/webhooks|api\.telegram\.org', re.I)
@@ -44,6 +57,7 @@ THREADING = re.compile(r'\b(?:threading|ThreadPool|multiprocessing|Process\s*\(|
 BEHAVIOR_LABELS = {
     'sms_otp_abuse': 'SMS / OTP abuse tool',
     'linux_privesc_enum': 'Linux privilege-escalation enumerator',
+    'metasploit_module': 'Metasploit Framework module',
     'script_dropper': 'Script-based dropper / downloader',
     'credential_stealer': 'Credential / data theft',
     'persistence_tool': 'Persistence mechanism',
@@ -98,6 +112,8 @@ def _service_name_from_url(url: str) -> str:
             return 'HackTricks (documentation)'
         if 'gtfobins' in host:
             return 'GTFOBins (documentation)'
+        if 'metasploit' in host or 'metasploit-framework' in (urlparse(url).path or '').lower():
+            return 'Metasploit Framework (Rapid7)'
         parts = host.split('.')
         if len(parts) >= 2:
             return parts[-2].replace('-', ' ').title()
@@ -141,6 +157,70 @@ def _privesc_signal_strength(text: str, urls: list[str]) -> tuple[int, list[str]
     return score, evidence
 
 
+def _infer_msf_module_role(filename: str, text: str) -> str | None:
+    name = (filename or '').lower()
+    if re.search(r'bf[_-]?xor|brute.?force.*xor|xor.*brute', name + ' ' + text[:2000], re.I):
+        return 'brute-force XOR / decode auxiliary'
+    if re.search(r'exploit/|/exploits/', text[:4000], re.I):
+        return 'exploit module'
+    if re.search(r'auxiliary/|/auxiliary/', text[:4000], re.I):
+        return 'auxiliary module'
+    if re.search(r'post/|/post/', text[:4000], re.I):
+        return 'post-exploitation module'
+    if re.search(r'payload/|/payloads/', text[:4000], re.I):
+        return 'payload module'
+    if re.search(r'class\s+MetasploitModule', text, re.I):
+        return 'Metasploit module class'
+    return None
+
+
+def _metasploit_signal_strength(
+    text: str,
+    urls: list[str],
+    family_hints: dict[str, Any] | None,
+    *,
+    filename: str | None = None,
+) -> tuple[int, list[str], str | None]:
+    evidence: list[str] = []
+    score = 0
+    family_hints = family_hints or {}
+
+    msf_family = next(
+        (m for m in family_hints.get('family_matches') or [] if m.get('family') == 'metasploit'),
+        None,
+    )
+    if msf_family:
+        hits = int(msf_family.get('hits') or 0)
+        score += min(18, 6 + hits * 3)
+        evidence.append(f"Family parser matched Metasploit framework strings ({hits} hit(s))")
+
+    markers = set(m.lower() for m in METASPLOIT_MARKERS.findall(text))
+    if markers:
+        score += min(12, len(markers) * 4)
+        evidence.append(
+            f"Contains Metasploit module markers ({', '.join(sorted(markers)[:5])})"
+        )
+
+    if METASPLOIT_MODULE_HEADER.search(text):
+        score += 10
+        evidence.append('Standard Metasploit module header (requires Metasploit / Rapid7 upstream source)')
+
+    msf_urls = [
+        u for u in urls
+        if re.search(r'metasploit|rapid7/metasploit-framework', u, re.I)
+    ]
+    if msf_urls:
+        score += min(8, len(msf_urls) * 4)
+        evidence.append(f"References Metasploit upstream URL(s) ({len(msf_urls)})")
+
+    module_role = _infer_msf_module_role(filename or '', text)
+    if module_role:
+        score += 4
+        evidence.append(f"Inferred module role: {module_role}")
+
+    return score, evidence, module_role
+
+
 def _score_profiles(signals: dict[str, Any]) -> list[tuple[str, int, list[str]]]:
     profiles: list[tuple[str, int, list[str]]] = []
 
@@ -152,6 +232,13 @@ def _score_profiles(signals: dict[str, Any]) -> list[tuple[str, int, list[str]]]
     has_threading = bool(signals.get('has_threading'))
     privesc_score = int(signals.get('privesc_score') or 0)
     privesc_evidence = list(signals.get('privesc_evidence') or [])
+    metasploit_score = int(signals.get('metasploit_score') or 0)
+    metasploit_evidence = list(signals.get('metasploit_evidence') or [])
+
+    if metasploit_score >= 8:
+        profiles.append(('metasploit_module', metasploit_score, metasploit_evidence or [
+            'Metasploit Framework module source detected',
+        ]))
 
     if privesc_score >= 10:
         profiles.append(('linux_privesc_enum', privesc_score, privesc_evidence or [
@@ -222,6 +309,8 @@ def _threat_category(profile_id: str) -> str:
         return 'abuse_tool'
     if profile_id == 'linux_privesc_enum':
         return 'dual_use_security_tool'
+    if profile_id == 'metasploit_module':
+        return 'dual_use_security_tool'
     if profile_id in {'script_dropper', 'credential_stealer', 'persistence_tool', 'remote_access', 'packed_loader', 'process_injection'}:
         return 'malware'
     if profile_id == 'generic_network_tool':
@@ -236,6 +325,16 @@ def _build_summary(profile_id: str, signals: dict[str, Any], services: list[str]
             "It hunts for misconfigurations, SUID binaries, sudo rules, cron jobs, capabilities, and credential paths, "
             "and embeds HackTricks/GTFOBins-style reference links for the analyst. "
             "Dual-use: legitimate in scoped pentests; hostile if run without authorization on production hosts."
+        )
+    if profile_id == 'metasploit_module':
+        role = signals.get('metasploit_module_role')
+        role_line = f" Inferred role: {role}." if role else ''
+        lang = signals.get('language') or 'script'
+        return (
+            f"This is Metasploit Framework module source ({lang}), meant to run inside msfconsole — "
+            f"not a standalone implant or C2 beacon.{role_line} "
+            "Headers reference the official Metasploit project and Rapid7 upstream repository. "
+            "Dual-use: legitimate in authorized penetration tests; investigate delivery context if found outside scope."
         )
     if profile_id == 'sms_otp_abuse':
         svc = ', '.join(services[:8]) if services else 'multiple online services'
@@ -274,6 +373,11 @@ def _recommended_action(profile_id: str, threat_category: str, combined_verdict:
             "Treat as offensive-security / post-exploitation enumeration. Authorized pentest use only — "
             "if found unmanaged on servers, investigate as unauthorized recon and rotate exposed credentials."
         )
+    if profile_id == 'metasploit_module':
+        return (
+            "Treat as exploit-framework module source. Run only in isolated lab or authorized engagement — "
+            "correlate with sibling files and delivery path if found on production endpoints."
+        )
     if profile_id == 'sms_otp_abuse':
         return (
             "Do not run against phone numbers you do not own. Block or remove if deployed for harassment; "
@@ -286,7 +390,13 @@ def _recommended_action(profile_id: str, threat_category: str, combined_verdict:
     return "Review findings below before execution."
 
 
-def extract_script_signals(text: str, script_deep: dict[str, Any] | None = None) -> dict[str, Any]:
+def extract_script_signals(
+    text: str,
+    script_deep: dict[str, Any] | None = None,
+    *,
+    family_hints: dict[str, Any] | None = None,
+    filename: str | None = None,
+) -> dict[str, Any]:
     script_deep = script_deep or {}
     urls = list(script_deep.get('c2_urls') or [])
     for call in script_deep.get('http_calls') or []:
@@ -297,6 +407,9 @@ def extract_script_signals(text: str, script_deep: dict[str, Any] | None = None)
     auth_sms_api_urls = [u for u in urls if is_auth_sms_api_url(u)]
     documentation_urls = [u for u in urls if is_documentation_url(u)]
     privesc_score, privesc_evidence = _privesc_signal_strength(text, urls)
+    metasploit_score, metasploit_evidence, module_role = _metasploit_signal_strength(
+        text, urls, family_hints, filename=filename,
+    )
 
     hosts = [_service_name_from_url(u) for u in urls if not is_documentation_url(u)]
     if not hosts:
@@ -317,6 +430,9 @@ def extract_script_signals(text: str, script_deep: dict[str, Any] | None = None)
         'language': script_deep.get('language') or 'script',
         'privesc_score': privesc_score,
         'privesc_evidence': privesc_evidence,
+        'metasploit_score': metasploit_score,
+        'metasploit_evidence': metasploit_evidence,
+        'metasploit_module_role': module_role,
     }
 
 
@@ -335,7 +451,12 @@ def interpret_behavior(
     if not text and script.get('commands_reconstructed'):
         text = '\n'.join(script.get('commands_reconstructed') or [])
 
-    signals: dict[str, Any] = extract_script_signals(text, script)
+    signals: dict[str, Any] = extract_script_signals(
+        text,
+        script,
+        family_hints=bundle.get('family_hints'),
+        filename=bundle.get('filename'),
+    )
     signals['high_risk_pe_imports'] = pe.get('high_risk_imports') or []
     signals['packer_hints'] = pe.get('packer_hints') or []
 
@@ -350,6 +471,11 @@ def interpret_behavior(
         services = _unique_preserve([_service_name_from_url(u) for u in signals.get('auth_sms_api_urls') or []])
     elif profile_id == 'linux_privesc_enum':
         services = _unique_preserve(['HackTricks', 'GTFOBins'] + (signals.get('unique_http_hosts') or [])[:6])
+    elif profile_id == 'metasploit_module':
+        services = _unique_preserve(
+            ['Metasploit Framework (Rapid7)', 'Metasploit.com']
+            + (signals.get('unique_http_hosts') or [])[:6]
+        )
     else:
         services = signals.get('unique_http_hosts') or []
 
@@ -365,6 +491,12 @@ def interpret_behavior(
         what_it_does.append(
             "Primary effect: enumerate the local Linux host for privilege-escalation paths."
         )
+    if profile_id == 'metasploit_module':
+        role = signals.get('metasploit_module_role')
+        role_suffix = f" ({role})" if role else ''
+        what_it_does.append(
+            f"Primary effect: extend Metasploit Framework with module capability{role_suffix} — runs inside msfconsole, not standalone."
+        )
     if script.get('execution_chain'):
         what_it_does.append(
             f"Technical detail: {len(script['execution_chain'])} reconstructed step(s) in the chain below."
@@ -374,6 +506,8 @@ def interpret_behavior(
         network_label = 'Third-party API endpoints (not C2)'
     elif profile_id == 'linux_privesc_enum':
         network_label = 'Pentest reference links (documentation)'
+    elif profile_id == 'metasploit_module':
+        network_label = 'Framework source / reference links'
     elif signals.get('documentation_urls'):
         network_label = 'Reference / documentation URLs'
     else:
@@ -384,6 +518,11 @@ def interpret_behavior(
         vt_context = 'VT often marks abuse tools as undetected — absence of detections does not imply safe use.'
     elif profile_id == 'linux_privesc_enum':
         vt_context = 'VT may flag LinPEAS as malicious or hacktool — that reflects dual-use offensive security tooling.'
+    elif profile_id == 'metasploit_module':
+        vt_context = (
+            'VT often marks upstream Metasploit module source as undetected or hacktool — '
+            'expected for dual-use exploit framework code pulled from Rapid7 repositories.'
+        )
 
     return {
         'behavior_class': profile_id,
@@ -401,6 +540,7 @@ def interpret_behavior(
             'auth_sms_api_urls': len(signals.get('auth_sms_api_urls') or []),
             'documentation_urls': len(signals.get('documentation_urls') or []),
             'privesc_score': signals.get('privesc_score'),
+            'metasploit_score': signals.get('metasploit_score'),
             'unique_services': len(services),
             'has_phone_fields': signals.get('has_phone_fields'),
             'has_threading': signals.get('has_threading'),

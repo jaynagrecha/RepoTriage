@@ -24,7 +24,7 @@ from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.8'
+PLATFORM_VERSION = '4.0.0-alpha.9'
 LOG = logging.getLogger('repotriage.worker')
 
 

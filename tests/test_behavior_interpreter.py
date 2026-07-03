@@ -131,5 +131,60 @@ class TestLinPeasBehavior(unittest.TestCase):
         self.assertFalse(is_auth_sms_api_url(url))
 
 
+BF_XOR_SNIPPET = '''
+# This module requires Metasploit: http://metasploit.com/download
+# Current source: https://github.com/rapid7/metasploit-framework
+require 'msf/core'
+class MetasploitModule < Msf::Auxiliary
+  def run
+    # brute-force XOR decode helper
+  end
+end
+'''
+
+
+class TestMetasploitModuleBehavior(unittest.TestCase):
+    def test_bf_xor_classified_as_metasploit_module(self):
+        family_hints = {
+            'primary_family_hint': 'metasploit',
+            'family_matches': [{'family': 'metasploit', 'hits': 4, 'sample': 'Metasploit'}],
+        }
+        script = {
+            'c2_urls': [
+                'http://metasploit.com/download',
+                'https://github.com/rapid7/metasploit-framework',
+            ],
+            'http_calls': [],
+            'commands_reconstructed': [
+                '# This module requires Metasploit: http://metasploit.com/download',
+                '# Current source: https://github.com/rapid7/metasploit-framework',
+            ],
+            'language': 'script',
+            'obfuscation_score': 1,
+        }
+        signals = extract_script_signals(
+            BF_XOR_SNIPPET,
+            script,
+            family_hints=family_hints,
+            filename='bf_xor.rb',
+        )
+        self.assertGreaterEqual(signals['metasploit_score'], 8)
+        self.assertEqual(signals['metasploit_module_role'], 'brute-force XOR / decode auxiliary')
+
+        bundle = {
+            'combined_verdict': 'needs_review',
+            'filename': 'bf_xor.rb',
+            'family_hints': family_hints,
+            'deep_exclusive': {'script': script},
+        }
+        behavior = interpret_behavior(bundle, sample_text=BF_XOR_SNIPPET)
+        self.assertEqual(behavior['behavior_class'], 'metasploit_module')
+        self.assertEqual(behavior['behavior_title'], 'Metasploit Framework module')
+        self.assertEqual(behavior['threat_category'], 'dual_use_security_tool')
+        self.assertIn('metasploit', behavior['summary'].lower())
+        self.assertIn('msfconsole', behavior['summary'].lower())
+        self.assertNotEqual(behavior['behavior_class'], 'unknown_script')
+
+
 if __name__ == '__main__':
     unittest.main()
