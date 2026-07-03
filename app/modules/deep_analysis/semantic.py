@@ -187,6 +187,16 @@ def _entry_label(entry_point: str) -> str:
     }.get(entry_point, 'program')
 
 
+def _extract_cli_description(text: str) -> str | None:
+    m = re.search(r'ArgumentParser\s*\(\s*description\s*=\s*["\']([^"\']+)["\']', text, re.I)
+    if m:
+        return m.group(1).strip()[:200]
+    m = re.search(r'add_argument\s*\([^)]*help\s*=\s*["\']([^"\']+)["\']', text, re.I)
+    if m:
+        return m.group(1).strip()[:200]
+    return None
+
+
 def _compose_generic_summary(
     *,
     language: str,
@@ -194,6 +204,7 @@ def _compose_generic_summary(
     caps: list[CapabilityHit],
     functions: list[dict[str, Any]],
     data_flow: str | None,
+    cli_description: str | None = None,
 ) -> tuple[str, str, list[str]]:
     cap_labels = [CAPABILITY_DEFS.get(c.id, c.id) for c in caps[:8]]
     fn_names = [f['name'] for f in functions[:6] if f.get('name')]
@@ -218,13 +229,22 @@ def _compose_generic_summary(
     if absent:
         bullets.append(f'Not observed in source: {", ".join(absent)}.')
 
+    purpose_hint = ''
+    if cli_description:
+        purpose_hint = f' Stated purpose: "{cli_description}".'
+
+    primary_cap = cap_labels[0].split('(')[0].strip().lower() if cap_labels else 'utility script'
     summary = (
-        f'{language.title()} {_entry_label(entry_point)} analyzed structurally from source. '
-        + (cap_labels[0] if cap_labels else 'Limited recognizable capability patterns')
-        + ('.' if cap_labels else '. Manual review recommended for intent.')
-    )
+        f'This {language} {_entry_label(entry_point)} was analyzed from source (AST + capability scan). '
+        f'Primary behavior: {primary_cap}.{purpose_hint} '
+        + (f'Processing path: {data_flow}.' if data_flow else '')
+        + (f' No {"; ".join(absent)} detected.' if absent else '')
+    ).strip()
+
     title_parts = [language.title(), _entry_label(entry_point)]
-    if cap_labels:
+    if cli_description:
+        title_parts.append(cli_description[:60])
+    elif cap_labels:
         title_parts.append(cap_labels[0].split('(')[0].strip())
     return ' — '.join(title_parts[:3]), summary, bullets
 
@@ -534,6 +554,7 @@ def analyze_semantic(
             caps=capabilities,
             functions=functions,
             data_flow=data_flow,
+            cli_description=_extract_cli_description(text),
         )
         behavior_class = 'semantic_analysis'
         threat_category = 'unknown'

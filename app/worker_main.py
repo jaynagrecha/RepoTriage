@@ -27,7 +27,7 @@ from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.11'
+PLATFORM_VERSION = '4.0.0-alpha.12'
 LOG = logging.getLogger('repotriage.worker')
 
 
@@ -101,11 +101,12 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
         script_deep=(bundle.get('deep_exclusive') or {}).get('script'),
         pe_deep=(bundle.get('deep_exclusive') or {}).get('pe'),
     )
-    bundle['semantic'] = await enrich_semantic_with_llm(
-        bundle['semantic'],
-        filename=filename,
-        sample_text=sample_text,
-    )
+    if llm_configured():
+        bundle['semantic'] = await enrich_semantic_with_llm(
+            bundle['semantic'],
+            filename=filename,
+            sample_text=sample_text,
+        )
     db.save_artifact(job_id, sha256, 'semantic', bundle['semantic'], PLATFORM_VERSION)
 
     verdict, evidence = combine_deep_verdict(

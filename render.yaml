@@ -21,7 +21,7 @@ services:
       - key: TRUST_PROXY
         value: "true"
       - key: SEMANTIC_LLM_ENABLED
-        value: "true"
+        value: "false"
       - key: SEMANTIC_LLM_PROVIDER
         value: openai
       - key: OPENAI_MODEL
@@ -44,7 +44,7 @@ services:
       - key: WORKER_POLL_SECONDS
         value: "2"
       - key: SEMANTIC_LLM_ENABLED
-        value: "true"
+        value: "false"
       - key: SEMANTIC_LLM_PROVIDER
         value: openai
       - key: OPENAI_MODEL

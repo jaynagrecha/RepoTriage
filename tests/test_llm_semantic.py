@@ -18,8 +18,9 @@ if __name__ == '__main__':
 
 
 class TestLlmSemantic(unittest.TestCase):
-    def test_llm_disabled_without_key(self):
-        with patch.dict(os.environ, {'OPENAI_API_KEY': '', 'SEMANTIC_LLM_ENABLED': 'true'}, clear=False):
+    def test_llm_disabled_by_default(self):
+        env = {k: v for k, v in os.environ.items() if k not in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'SEMANTIC_LLM_ENABLED')}
+        with patch.dict(os.environ, env, clear=True):
             self.assertFalse(llm_configured())
 
     def test_validate_rejects_hallucinated_c2(self):

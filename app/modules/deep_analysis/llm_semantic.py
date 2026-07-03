@@ -16,7 +16,7 @@ TIMEOUT = float(os.getenv('SEMANTIC_LLM_TIMEOUT', '45'))
 
 
 def llm_configured() -> bool:
-    if os.getenv('SEMANTIC_LLM_ENABLED', 'true').lower() in {'0', 'false', 'no', 'off'}:
+    if os.getenv('SEMANTIC_LLM_ENABLED', 'false').lower() in {'0', 'false', 'no', 'off'}:
         return False
     provider = (os.getenv('SEMANTIC_LLM_PROVIDER') or 'openai').lower()
     if provider == 'openai':
