@@ -4,6 +4,8 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from .semantic import analyze_semantic
+
 
 # Strict API-style paths only — avoids doc URLs like ".../signature-verification-failed".
 STRICT_AUTH_SMS_API = re.compile(
@@ -58,6 +60,8 @@ BEHAVIOR_LABELS = {
     'sms_otp_abuse': 'SMS / OTP abuse tool',
     'linux_privesc_enum': 'Linux privilege-escalation enumerator',
     'metasploit_module': 'Metasploit Framework module',
+    'shellcode_tool': 'Shellcode encode/decode utility',
+    'semantic_analysis': 'Code-derived behavior analysis',
     'script_dropper': 'Script-based dropper / downloader',
     'credential_stealer': 'Credential / data theft',
     'persistence_tool': 'Persistence mechanism',
@@ -311,6 +315,8 @@ def _threat_category(profile_id: str) -> str:
         return 'dual_use_security_tool'
     if profile_id == 'metasploit_module':
         return 'dual_use_security_tool'
+    if profile_id in {'shellcode_tool', 'semantic_analysis'}:
+        return 'dual_use_security_tool'
     if profile_id in {'script_dropper', 'credential_stealer', 'persistence_tool', 'remote_access', 'packed_loader', 'process_injection'}:
         return 'malware'
     if profile_id == 'generic_network_tool':
@@ -436,6 +442,53 @@ def extract_script_signals(
     }
 
 
+def _merge_behavior_with_semantic(
+    profile_behavior: dict[str, Any],
+    semantic: dict[str, Any],
+    *,
+    profile_score: int,
+) -> dict[str, Any]:
+    """Prefer structured semantic analysis when it outscores or clarifies heuristic profiles."""
+    sem_score = int(semantic.get('confidence_score') or 0)
+    profile_id = profile_behavior.get('behavior_class') or ''
+    use_semantic = bool(semantic.get('purpose_rule_id')) and sem_score >= 18
+    if not use_semantic:
+        if profile_id in {'unknown_script', 'unknown_binary', 'generic_network_tool', 'semantic_analysis'}:
+            use_semantic = sem_score >= 24
+        elif sem_score >= profile_score + 12:
+            use_semantic = True
+
+    if not use_semantic:
+        profile_behavior['semantic'] = semantic
+        profile_behavior['interpretation_source'] = 'heuristic_profile'
+        return profile_behavior
+
+    merged = dict(profile_behavior)
+    merged.update({
+        'behavior_class': semantic.get('behavior_class') or profile_id,
+        'behavior_title': semantic.get('behavior_title') or profile_behavior.get('behavior_title'),
+        'confidence': semantic.get('confidence') or profile_behavior.get('confidence'),
+        'confidence_score': max(sem_score, profile_score),
+        'threat_category': semantic.get('threat_category') or profile_behavior.get('threat_category'),
+        'summary': semantic.get('summary') or profile_behavior.get('summary'),
+        'recommended_action': semantic.get('recommended_action') or profile_behavior.get('recommended_action'),
+        'interpretation_source': 'semantic_capability',
+        'semantic': semantic,
+    })
+    sem_bullets = list(semantic.get('what_it_does') or [])
+    profile_bullets = [b for b in (profile_behavior.get('what_it_does') or []) if b not in sem_bullets]
+    merged['what_it_does'] = sem_bullets + profile_bullets[:2]
+    merged['evidence'] = sem_bullets[:6] or profile_behavior.get('evidence')
+    caps = semantic.get('capabilities') or []
+    if caps:
+        merged.setdefault('signals', {}).update({
+            'semantic_capabilities': len(caps),
+            'semantic_rule': semantic.get('purpose_rule_id'),
+            'ast_parsed': semantic.get('ast_parsed'),
+        })
+    return merged
+
+
 def interpret_behavior(
     bundle: dict[str, Any],
     *,
@@ -450,6 +503,7 @@ def interpret_behavior(
     text = sample_text or ''
     if not text and script.get('commands_reconstructed'):
         text = '\n'.join(script.get('commands_reconstructed') or [])
+    full_text = sample_text or text
 
     signals: dict[str, Any] = extract_script_signals(
         text,
@@ -523,8 +577,10 @@ def interpret_behavior(
             'VT often marks upstream Metasploit module source as undetected or hacktool — '
             'expected for dual-use exploit framework code pulled from Rapid7 repositories.'
         )
+    elif profile_id == 'shellcode_tool':
+        vt_context = 'VT often marks shellcode utilities as undetected — absence of detections does not imply safe deployment context.'
 
-    return {
+    profile_result = {
         'behavior_class': profile_id,
         'behavior_title': BEHAVIOR_LABELS.get(profile_id, profile_id),
         'confidence': conf,
@@ -548,3 +604,21 @@ def interpret_behavior(
         'recommended_action': _recommended_action(profile_id, threat_category, combined),
         'vt_context': vt_context,
     }
+
+    semantic = bundle.get('semantic')
+    if not semantic:
+        semantic = analyze_semantic(
+            None,
+            filename=bundle.get('filename'),
+            sample_text=full_text,
+            static=static,
+            family_hints=bundle.get('family_hints'),
+            script_deep=script,
+            pe_deep=pe,
+        )
+
+    return _merge_behavior_with_semantic(
+        profile_result,
+        semantic,
+        profile_score=profile_result['confidence_score'],
+    )

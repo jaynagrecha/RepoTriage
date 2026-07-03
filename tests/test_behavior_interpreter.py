@@ -43,8 +43,8 @@ class TestBehaviorInterpreter(unittest.TestCase):
         behavior = interpret_behavior(bundle, sample_text=SMS_BOMB_SNIPPET)
         self.assertEqual(behavior['behavior_class'], 'sms_otp_abuse')
         self.assertEqual(behavior['threat_category'], 'abuse_tool')
-        self.assertIn('SMS', behavior['summary'])
-        self.assertIn('not traditional C2', behavior['summary'])
+        self.assertIn('SMS/OTP', behavior['summary'])
+        self.assertIn('C2', behavior['summary'])
         self.assertTrue(behavior['notable_services'])
 
     def test_script_deep_extracts_http_calls(self):

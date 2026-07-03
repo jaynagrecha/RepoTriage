@@ -83,6 +83,12 @@ def build_deep_narrative(bundle: dict[str, Any]) -> dict[str, Any]:
     bullets: list[str] = []
     if behavior.get('summary'):
         bullets.append(behavior['summary'])
+    semantic = bundle.get('semantic') or behavior.get('semantic') or {}
+    if semantic.get('capabilities'):
+        cap_preview = ', '.join(
+            c.get('label', c.get('id', '')) for c in semantic['capabilities'][:5]
+        )
+        bullets.append(f"Code understanding: {cap_preview}.")
     for item in behavior.get('what_it_does') or []:
         if item not in bullets:
             bullets.append(item)
