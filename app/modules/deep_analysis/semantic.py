@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .semantic_structure import extract_structure, merge_ast_and_structure
+
 
 CAPABILITY_DEFS: dict[str, str] = {
     'cli_interface': 'Command-line interface (argparse/getopt/sys.argv)',
@@ -32,6 +34,18 @@ CAPABILITY_DEFS: dict[str, str] = {
     'pe_injection': 'PE process injection imports',
     'pe_packing': 'Packer or protector indicators',
     'anti_analysis': 'Anti-debug or anti-VM checks',
+    'network_socket': 'Raw socket / reverse-shell style networking',
+    'registry_access': 'Windows registry read/write',
+    'service_manipulation': 'Service or scheduled task control',
+    'file_enumeration': 'Directory or filesystem enumeration',
+    'process_manipulation': 'Process creation or termination',
+    'keylogging': 'Keystroke capture patterns',
+    'ransomware_pattern': 'Mass file encryption / ransom note patterns',
+    'scanner_recon': 'Network or host scanning',
+    'database_access': 'Database client or query execution',
+    'email_smtp': 'Email sending via SMTP',
+    'cloud_api': 'Cloud provider API usage',
+    'packer_obfuscation': 'Heavy obfuscation or packing markers',
 }
 
 
@@ -82,7 +96,7 @@ PURPOSE_RULES: list[PurposeRule] = [
         behavior_title='Linux privilege-escalation enumerator',
         threat_category='dual_use_security_tool',
         requires=frozenset({'privesc_enumeration'}),
-        any_of=frozenset({'library_module', 'cli_interface'}),
+        any_of=frozenset({'library_module', 'cli_interface', 'file_enumeration', 'credential_access'}),
         forbids=frozenset({'sms_abuse_api'}),
         summary_template=(
             'This behaves like a Linux privilege-escalation enumeration script. It searches for '
@@ -151,6 +165,81 @@ PURPOSE_RULES: list[PurposeRule] = [
         summary_template='Behavior suggests data exfiltration via messaging/webhook channels.',
         primary_effect='Exfiltrate data via webhook or bot endpoints.',
         recommended_action='Do not execute. Quarantine and investigate exposure.',
+    ),
+    PurposeRule(
+        rule_id='reverse_shell',
+        behavior_class='remote_access',
+        behavior_title='Reverse shell / remote command channel',
+        threat_category='malware',
+        requires=frozenset({'network_socket'}),
+        any_of=frozenset({'subprocess_exec', 'dynamic_exec'}),
+        forbids=frozenset(),
+        summary_template=(
+            'This implements or references a reverse-shell style channel — raw sockets or bash/tcp '
+            'redirection combined with command execution. Treat as remote-access malware unless proven '
+            'part of an authorized test.'
+        ),
+        primary_effect='Open a command channel to a remote host (reverse shell pattern).',
+        recommended_action='Do not execute. Quarantine and investigate how it was delivered.',
+    ),
+    PurposeRule(
+        rule_id='obfuscated_dropper',
+        behavior_class='script_dropper',
+        behavior_title='Obfuscated downloader / dropper',
+        threat_category='malware',
+        requires=frozenset({'download_remote'}),
+        any_of=frozenset({'dynamic_exec', 'subprocess_exec', 'crypto_base64', 'packer_obfuscation'}),
+        forbids=frozenset({'privesc_enumeration'}),
+        summary_template=(
+            'Downloads remote content and uses execution or de-obfuscation primitives — staged dropper pattern.'
+        ),
+        primary_effect='Download and execute or decode a follow-on payload.',
+        recommended_action='Do not execute on production. Quarantine and analyze delivery path.',
+    ),
+    PurposeRule(
+        rule_id='ransomware_like',
+        behavior_class='ransomware_pattern',
+        behavior_title='Ransomware-like file encryption pattern',
+        threat_category='malware',
+        requires=frozenset({'crypto_generic', 'file_write', 'file_enumeration'}),
+        any_of=frozenset({'file_read'}),
+        forbids=frozenset(),
+        summary_template=(
+            'Walks directories, reads files, applies encryption, and writes output — ransomware-like behavior. '
+            'Verify whether this is a security research sample or active malware.'
+        ),
+        primary_effect='Enumerate and encrypt user files (ransomware-like workflow).',
+        recommended_action='Do not execute. Isolate host and preserve forensic copies.',
+    ),
+    PurposeRule(
+        rule_id='network_client_utility',
+        behavior_class='generic_network_tool',
+        behavior_title='HTTP/network client utility',
+        threat_category='unknown',
+        requires=frozenset({'network_http'}),
+        any_of=frozenset({'cli_interface', 'library_module'}),
+        forbids=frozenset({'subprocess_exec', 'dynamic_exec', 'download_remote', 'webhook_exfil', 'persistence'}),
+        summary_template=(
+            'This is a {language} {entry_label} that performs HTTP or network client operations without '
+            'download-and-execute, persistence, or exfiltration primitives in source.'
+        ),
+        primary_effect='Contact external HTTP/network endpoints — client utility, not a dropper by itself.',
+        recommended_action='Review URLs/endpoints and deployment context before running.',
+    ),
+    PurposeRule(
+        rule_id='pe_implant_loader',
+        behavior_class='process_injection',
+        behavior_title='PE loader / injection-capable binary',
+        threat_category='malware',
+        requires=frozenset({'pe_injection'}),
+        any_of=frozenset({'pe_packing', 'network_http', 'anti_analysis'}),
+        forbids=frozenset(),
+        summary_template=(
+            'PE imports indicate process manipulation or injection, with optional packing or anti-analysis. '
+            'Typical of loaders, injectors, or implants — not a standalone document or config file.'
+        ),
+        primary_effect='Manipulate or inject into other processes (PE import surface).',
+        recommended_action='Do not execute. Static analysis only unless detonated in an isolated sandbox.',
     ),
 ]
 
@@ -354,12 +443,14 @@ def _text_capability_scan(text: str, *, filename: str = '') -> list[CapabilityHi
 
     if re.search(r'argparse|ArgumentParser|getopt|sys\.argv', text):
         add('cli_interface', 'CLI parser or argv usage')
-    if re.search(r'^\s*def\s+\w+\(', text, re.M) and 'if __name__' not in text:
-        add('library_module', 'Defines functions without exclusive main guard')
+    if re.search(r'^\s*def\s+\w+\(', text, re.M):
+        add('library_module', 'Defines callable functions')
+    if re.search(r'class\s+MetasploitModule|module\.exports|Msf::', text):
+        add('library_module', 'Module class or export surface')
 
-    if re.search(r'requests\.(get|post|put|patch|delete)|urllib\.|http\.client|aiohttp|httpx', text, re.I):
+    if re.search(r'requests\.(get|post|put|patch|delete)|urllib\.|http\.client|aiohttp|httpx|axios|fetch\s*\(|http\.get|http\.request', text, re.I):
         add('network_http', 'HTTP client library usage')
-    if re.search(r'subprocess\.|os\.system|os\.popen|Popen\s*\(', text):
+    if re.search(r'subprocess\.|os\.system|os\.popen|Popen\s*\(|Start-Process|Invoke-Expression|\biex\b', text, re.I):
         add('subprocess_exec', 'Subprocess or shell spawn')
     if re.search(r'\beval\s*\(|\bexec\s*\(|invoke-expression|\biex\b', text, re.I):
         add('dynamic_exec', 'Dynamic evaluation primitive')
@@ -387,11 +478,19 @@ def _text_capability_scan(text: str, *, filename: str = '') -> list[CapabilityHi
     if re.search(r'linpeas|privilege.?escalation|gtfobins|/etc/shadow|suid|sudoers', text, re.I):
         add('privesc_enumeration', 'Privilege-escalation enumeration patterns')
 
-    if re.search(r'downloadstring|downloadfile|invoke-webrequest|curl\s|wget\s|bitsadmin', text, re.I):
+    if re.search(r'downloadstring|downloadfile|invoke-webrequest|wget\s|bitsadmin|iwr\b', text, re.I):
         add('download_remote', 'Remote download primitive')
+    else:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('#') or stripped.startswith('::'):
+                continue
+            if re.search(r'\bcurl\s+', line, re.I):
+                add('download_remote', 'Remote download via curl')
+                break
     if re.search(r'CurrentVersion\\Run|schtasks|crontab|/etc/cron', text, re.I):
         add('persistence', 'Persistence mechanism reference')
-    if re.search(r'mimikatz|lsass|sekurlsa|\.env|id_rsa|password|credential', text, re.I):
+    if re.search(r'mimikatz|lsass|sekurlsa|id_rsa|\.htpasswd|google_authenticator|/etc/shadow', text, re.I):
         add('credential_access', 'Credential or secret access pattern')
     if re.search(r'discord(?:app)?\.com/api/webhooks|api\.telegram\.org', text, re.I):
         add('webhook_exfil', 'Webhook/bot exfil endpoint')
@@ -402,6 +501,29 @@ def _text_capability_scan(text: str, *, filename: str = '') -> list[CapabilityHi
         add('phone_fields', 'Phone number variable fields')
     if re.search(r'threading|ThreadPool|multiprocessing|asyncio\.gather', text):
         add('threading_parallel', 'Parallel worker/thread usage')
+
+    if re.search(r'/dev/tcp/|socket\.socket|\.connect\s*\(|\.bind\s*\(|/dev/udp/|bash\s+-i\s+>&|TCPClient|Net\.Sockets', text, re.I):
+        add('network_socket', 'Socket or bash reverse-shell networking')
+    if re.search(r'reg\s+(add|delete)|HKEY_|Registry\.|Set-ItemProperty.*Registry', text, re.I):
+        add('registry_access', 'Windows registry access')
+    if re.search(r'os\.walk|glob\.glob|Get-ChildItem\s+.*-Recurse|find\s+/|scandir', text, re.I):
+        add('file_enumeration', 'Directory or filesystem enumeration')
+    if re.search(r'CreateProcess|TerminateProcess|kill\s*\(|taskkill|Stop-Process', text, re.I):
+        add('process_manipulation', 'Process creation or termination')
+    if re.search(r'GetAsyncKeyState|keylog|pynput\.keyboard|SetWindowsHookEx', text, re.I):
+        add('keylogging', 'Keystroke capture pattern')
+    if re.search(r'ransom|decrypt\s+instruction|bitcoin|\.locked|\.encrypted|README.*recover', lower):
+        add('ransomware_pattern', 'Ransom note or mass-encryption marker')
+    if re.search(r'nmap|masscan|ping\s+-c|Test-NetConnection|port\s*scan', text, re.I):
+        add('scanner_recon', 'Network or port scanning')
+    if re.search(r'sqlite3|pymysql|psycopg2|mysql\.connector|Invoke-Sqlcmd', text, re.I):
+        add('database_access', 'Database client usage')
+    if re.search(r'smtplib|Send-MailMessage|System\.Net\.Mail', text, re.I):
+        add('email_smtp', 'Email/SMTP sending')
+    if re.search(r'boto3|azure\.|google\.cloud|BlobServiceClient', text, re.I):
+        add('cloud_api', 'Cloud provider API usage')
+    if len(re.findall(r'_0x[a-f0-9]{3,}|chr\s*\(|fromCharCode|-EncodedCommand|\\\\x[0-9a-f]{2}', text, re.I)) >= 4:
+        add('packer_obfuscation', 'Heavy obfuscation markers')
 
     if 'bf_xor' in name_lower or ('xor' in name_lower and 'bf' in name_lower):
         add('metasploit_framework', 'Filename consistent with Metasploit auxiliary module', 'medium')
@@ -421,6 +543,16 @@ def _infer_data_flow(functions: list[dict[str, Any]], caps: set[str], text: str)
         return 'Phone number input → HTTP API requests → external services'
     if re.search(r'Encrypting\s*&\s*Decrypting\s*Shellcode', text, re.I):
         return 'CLI args (shellcode, key) → XOR transform → printed encoded/decoded shellcode'
+    if 'network_socket' in caps and ('subprocess_exec' in caps or 'dynamic_exec' in caps):
+        return 'Remote host:port → shell/command channel (reverse shell pattern)'
+    if 'network_http' in caps and 'download_remote' not in caps and 'subprocess_exec' not in caps:
+        return 'HTTP request/response to external endpoints (client only in source)'
+    if 'file_enumeration' in caps and 'crypto_generic' in caps and 'file_write' in caps:
+        return 'Directory walk → read files → encrypt/write (ransomware-like chain)'
+    if 'registry_access' in caps and 'persistence' in caps:
+        return 'Registry modification for persistence'
+    if 'scanner_recon' in caps:
+        return 'Host/network discovery and port scanning'
     return None
 
 
@@ -430,8 +562,12 @@ def _infer_language(filename: str, text: str, static: dict[str, Any] | None) -> 
         return str(typed['language'])
     ext = Path(filename or '').suffix.lower()
     mapping = {
-        '.py': 'python', '.rb': 'ruby', '.ps1': 'powershell', '.js': 'javascript',
-        '.sh': 'shell', '.bash': 'shell', '.pl': 'perl', '.lua': 'lua',
+        '.py': 'python', '.rb': 'ruby', '.ps1': 'powershell', '.psm1': 'powershell',
+        '.js': 'javascript', '.mjs': 'javascript', '.ts': 'javascript',
+        '.sh': 'shell', '.bash': 'shell', '.zsh': 'shell',
+        '.pl': 'perl', '.lua': 'lua', '.php': 'php',
+        '.bat': 'batch', '.cmd': 'batch', '.vbs': 'vbscript', '.vbe': 'vbscript',
+        '.hta': 'html', '.wsf': 'xml',
     }
     if ext in mapping:
         return mapping[ext]
@@ -459,6 +595,58 @@ def _pe_capabilities(pe: dict[str, Any]) -> list[CapabilityHit]:
     return hits
 
 
+def _analyze_binary_semantic(pe_deep: dict[str, Any], text: str, filename: str) -> dict[str, Any]:
+    caps = _pe_capabilities(pe_deep)
+    cap_ids = _cap_ids(caps)
+    imports = (pe_deep.get('high_risk_imports') or []) + (pe_deep.get('informational_imports') or [])
+    import_names = [i.get('import', '') for i in imports[:8]]
+    title = 'PE binary — import and string analysis'
+    summary = (
+        f'Compiled PE binary `{filename}` analyzed via import taxonomy and embedded strings. '
+        f'Detected {len(caps)} capability signal(s) from PE structure.'
+    )
+    bullets: list[str] = []
+    if import_names:
+        bullets.append(f'Notable imports: {", ".join(import_names)}.')
+    if pe_deep.get('packer_hints'):
+        bullets.append(f'Packer/protector hints: {"; ".join(pe_deep["packer_hints"][:3])}.')
+    if cap_ids & {'pe_injection'}:
+        title = 'PE loader / injection-capable binary'
+        summary = (
+            'PE imports indicate cross-process manipulation or injection. Review as potential loader unless '
+            'this is a known legitimate DLL in your environment.'
+        )
+    elif cap_ids & {'pe_packing'} and not cap_ids & {'pe_injection'}:
+        title = 'Packed or protected PE binary'
+        summary = 'High-entropy or low-import PE — may hide a second-stage payload. Static unpack recommended.'
+    threat = 'malware' if cap_ids & {'pe_injection', 'anti_analysis'} else 'unknown'
+    if cap_ids & {'pe_packing'} and threat == 'unknown':
+        threat = 'unknown'
+    return {
+        'behavior_class': 'pe_binary_analysis',
+        'behavior_title': title,
+        'summary': summary,
+        'what_it_does': bullets or ['Binary analyzed from PE imports and embedded strings — no script source.'],
+        'threat_category': threat,
+        'confidence': 'medium' if caps else 'low',
+        'confidence_score': min(100, len(caps) * 15 + len(imports)),
+        'recommended_action': 'Do not execute on production unless scope is confirmed. Use static PE analysis below.',
+        'capabilities': [
+            {'id': c.id, 'label': CAPABILITY_DEFS.get(c.id, c.id), 'confidence': c.confidence, 'evidence': c.evidence[:4]}
+            for c in caps
+        ],
+        'entry_point': 'binary',
+        'language': 'pe/binary',
+        'data_flow': None,
+        'purpose_rule_id': 'pe_implant_loader' if cap_ids >= {'pe_injection'} else None,
+        'inference_method': 'pe_capability',
+        'rule_score': len(caps) * 10,
+        'ast_parsed': False,
+        'functions': [],
+        'engine': 'repotriage_semantic_v2',
+    }
+
+
 def analyze_semantic(
     path: Path | None,
     *,
@@ -478,6 +666,12 @@ def analyze_semantic(
     ast_info: dict[str, Any] = {}
     if language == 'python' and text.strip():
         ast_info = _analyze_python_ast(text)
+    if text.strip():
+        structure = extract_structure(language, text)
+        ast_info = merge_ast_and_structure(ast_info, structure)
+        for imp in ast_info.get('imports') or []:
+            if any(x in imp.lower() for x in ('http', 'request', 'urllib', 'axios', 'fetch')):
+                pass  # handled in text scan
 
     capabilities = _text_capability_scan(text, filename=fname)
     cap_map = {c.id: c for c in capabilities}
@@ -510,7 +704,23 @@ def analyze_semantic(
             cap_map[hit.id] = hit
 
     caps = _cap_ids(capabilities)
-    entry_point = ast_info.get('entry_point') or ('binary' if (pe_deep or {}).get('high_risk_imports') else 'script')
+    is_pe = bool((pe_deep or {}).get('high_risk_imports') or (pe_deep or {}).get('packer_hints'))
+    entry_point = ast_info.get('entry_point') or ('binary' if is_pe else 'script')
+
+    # Minimal / binary-only input — derive behavior from PE surface
+    if len(text.strip()) < 40 and is_pe:
+        binary_sem = _analyze_binary_semantic(pe_deep or {}, text, fname)
+        for rule in PURPOSE_RULES:
+            score, _ = _score_rule(rule, caps)
+            if score >= 18 and rule.rule_id == 'pe_implant_loader' and ('pe_injection' in cap_ids):
+                binary_sem['purpose_rule_id'] = rule.rule_id
+                binary_sem['behavior_class'] = rule.behavior_class
+                binary_sem['behavior_title'] = rule.behavior_title
+                binary_sem['summary'] = rule.summary_template.format(language='pe', entry_label='binary', role_line='')
+                binary_sem['confidence'] = 'high'
+                binary_sem['confidence_score'] = max(binary_sem['confidence_score'], 72)
+                break
+        return binary_sem
 
     best_rule: PurposeRule | None = None
     best_score = 0
@@ -530,7 +740,7 @@ def analyze_semantic(
             role_line = 'Inferred role: brute-force XOR / decode auxiliary. '
 
     inference_method = 'capability_rules'
-    if best_rule and best_score >= 18:
+    if best_rule and best_score >= 14:
         behavior_class = best_rule.behavior_class
         behavior_title = best_rule.behavior_title
         threat_category = best_rule.threat_category
@@ -567,11 +777,11 @@ def analyze_semantic(
             'Review structured capabilities below. Run in an isolated VM if dynamic validation is required.'
         )
         purpose_rule_id = None
-        confidence_score = min(100, len(capabilities) * 8 + (20 if ast_info.get('parsed') else 0))
-        confidence = 'high' if confidence_score >= 56 else ('medium' if confidence_score >= 32 else 'low')
+        confidence_score = min(100, len(capabilities) * 10 + (25 if ast_info.get('parsed') else 10))
+        confidence = 'high' if confidence_score >= 50 else ('medium' if confidence_score >= 24 else 'low')
 
     return {
-        'engine': 'repotriage_semantic_v1',
+        'engine': 'repotriage_semantic_v2',
         'language': language,
         'entry_point': entry_point,
         'ast_parsed': bool(ast_info.get('parsed')),

@@ -62,6 +62,9 @@ BEHAVIOR_LABELS = {
     'metasploit_module': 'Metasploit Framework module',
     'shellcode_tool': 'Shellcode encode/decode utility',
     'semantic_analysis': 'Code-derived behavior analysis',
+    'pe_binary_analysis': 'PE binary — structural analysis',
+    'ransomware_pattern': 'Ransomware-like encryption pattern',
+    'remote_access': 'Reverse shell / remote access',
     'script_dropper': 'Script-based dropper / downloader',
     'credential_stealer': 'Credential / data theft',
     'persistence_tool': 'Persistence mechanism',
@@ -317,6 +320,10 @@ def _threat_category(profile_id: str) -> str:
         return 'dual_use_security_tool'
     if profile_id in {'shellcode_tool', 'semantic_analysis'}:
         return 'dual_use_security_tool'
+    if profile_id in {'remote_access', 'ransomware_pattern'}:
+        return 'malware'
+    if profile_id == 'pe_binary_analysis':
+        return 'unknown'
     if profile_id in {'script_dropper', 'credential_stealer', 'persistence_tool', 'remote_access', 'packed_loader', 'process_injection'}:
         return 'malware'
     if profile_id == 'generic_network_tool':
@@ -448,15 +455,24 @@ def _merge_behavior_with_semantic(
     *,
     profile_score: int,
 ) -> dict[str, Any]:
-    """Prefer structured semantic analysis when it outscores or clarifies heuristic profiles."""
+    """Prefer structured semantic analysis — primary interpreter for all analyzable files."""
     sem_score = int(semantic.get('confidence_score') or 0)
     profile_id = profile_behavior.get('behavior_class') or ''
-    use_semantic = bool(semantic.get('purpose_rule_id')) and sem_score >= 18
-    if not use_semantic:
-        if profile_id in {'unknown_script', 'unknown_binary', 'generic_network_tool', 'semantic_analysis'}:
-            use_semantic = sem_score >= 24
-        elif sem_score >= profile_score + 12:
-            use_semantic = True
+    cap_count = len(semantic.get('capabilities') or [])
+    has_rule = bool(semantic.get('purpose_rule_id'))
+    has_summary = bool((semantic.get('summary') or '').strip())
+
+    use_semantic = (
+        has_rule
+        or cap_count >= 1
+        or bool(semantic.get('ast_parsed'))
+        or sem_score >= 16
+        or profile_id in {'unknown_script', 'unknown_binary'}
+    )
+    if profile_id in {'unknown_script', 'unknown_binary', 'generic_network_tool', 'semantic_analysis', 'pe_binary_analysis'}:
+        use_semantic = has_summary or cap_count >= 1 or sem_score >= 8
+    elif sem_score >= profile_score + 8 and has_summary:
+        use_semantic = True
 
     if not use_semantic:
         profile_behavior['semantic'] = semantic
