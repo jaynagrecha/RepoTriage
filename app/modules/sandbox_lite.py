@@ -49,8 +49,10 @@ def run_sandbox_lite(path: Path, *, filename: str | None = None) -> dict[str, An
         return result
 
     suspicious = []
-    if re.search(r'IsDebuggerPresent|VirtualAlloc|WriteProcessMemory', text, re.I):
-        suspicious.append('process_injection_or_antidebug')
+    if re.search(r'IsDebuggerPresent|CheckRemoteDebuggerPresent|NtQueryInformationProcess', text, re.I):
+        suspicious.append('anti_debug')
+    if re.search(r'WriteProcessMemory|CreateRemoteThread|NtCreateThreadEx', text, re.I):
+        suspicious.append('process_injection')
     if re.search(r'https?://', text, re.I):
         suspicious.append('embedded_urls')
         result['network_indicators'] = re.findall(r'https?://[^\s\'\"<>]+', text)[:20]

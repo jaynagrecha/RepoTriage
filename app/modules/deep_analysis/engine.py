@@ -31,8 +31,10 @@ def _compute_delta(static: dict[str, Any] | None, deep: dict[str, Any]) -> dict[
 
     for hint in pe.get('packer_hints') or []:
         exclusive.append({'type': 'packer', 'value': hint, 'source': 'pe_deep'})
-    for risk in pe.get('risk_imports') or []:
+    for risk in pe.get('high_risk_imports') or pe.get('risk_imports') or []:
         exclusive.append({'type': 'risk_import', 'value': risk.get('import', ''), 'source': risk.get('category', 'pe')})
+    for info in pe.get('informational_imports') or []:
+        exclusive.append({'type': 'info_import', 'value': info.get('import', ''), 'source': 'informational_pe'})
     for phase in script.get('kill_chain_phases') or []:
         exclusive.append({'type': 'kill_chain', 'value': phase.get('label', ''), 'source': phase.get('phase', '')})
     for cmd in script.get('commands_reconstructed') or []:

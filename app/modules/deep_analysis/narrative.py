@@ -63,8 +63,20 @@ def build_deep_narrative(bundle: dict[str, Any]) -> dict[str, Any]:
         bullets.append(f"Reconstructed {len(script['execution_chain'])} execution step(s) showing how the payload chains commands.")
     if script.get('c2_urls'):
         bullets.append(f"Identified {len(script['c2_urls'])} network callback URL(s) from deep script/PE string analysis.")
-    if pe.get('risk_imports'):
-        bullets.append(f"Flagged {len(pe['risk_imports'])} high-risk PE import(s) (injection, anti-debug, network, persistence).")
+    if pe.get('high_risk_imports'):
+        cats = ', '.join(sorted((pe.get('categories_detected') or {}).keys())) or 'none'
+        bullets.append(
+            f"High-confidence PE imports: {len(pe['high_risk_imports'])} "
+            f"in category/categories: {cats}."
+        )
+    elif pe.get('informational_imports'):
+        names = ', '.join(i['import'].split(':')[-1] for i in pe['informational_imports'][:4])
+        not_found = ', '.join(pe.get('categories_not_detected') or [])
+        bullets.append(
+            f"Informational PE imports only ({names}) — common in legitimate DLLs. "
+            f"No high-confidence anti-debug, network, or persistence imports detected"
+            f"{(' (scanned, not found: ' + not_found + ')' if not_found else '')}."
+        )
     if pe.get('packer_hints'):
         bullets.append(f"Packer/protection indicators: {'; '.join(pe['packer_hints'][:2])}")
     if (yara.get('matches') or []):

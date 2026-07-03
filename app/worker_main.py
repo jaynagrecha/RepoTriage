@@ -118,7 +118,9 @@ def _combined_verdict(bundle: dict, static: dict | None = None) -> str:
     deep = bundle.get('deep_exclusive') or {}
     if (deep.get('script') or {}).get('likely_stages', 0) >= 3:
         scores.append('malicious')
-    if (deep.get('pe') or {}).get('risk_score', 0) >= 40:
+    if (deep.get('pe') or {}).get('high_risk_imports'):
+        scores.append('suspicious')
+    elif (deep.get('pe') or {}).get('informational_imports') and (deep.get('pe') or {}).get('has_strong_injection_chain'):
         scores.append('suspicious')
     if 'malicious' in scores:
         return 'malicious'
