@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .semantic_structure import extract_structure, merge_ast_and_structure
+from .semantic_rules import PurposeRule, PURPOSE_RULES
+from .semantic_capabilities_ext import EXTENDED_CAPABILITY_DEFS, scan_extended_capabilities
 
 
 CAPABILITY_DEFS: dict[str, str] = {
@@ -48,200 +50,14 @@ CAPABILITY_DEFS: dict[str, str] = {
     'packer_obfuscation': 'Heavy obfuscation or packing markers',
 }
 
+CAPABILITY_DEFS.update(EXTENDED_CAPABILITY_DEFS)
+
 
 @dataclass
 class CapabilityHit:
     id: str
     confidence: str
     evidence: list[str] = field(default_factory=list)
-
-
-@dataclass
-class PurposeRule:
-    rule_id: str
-    behavior_class: str
-    behavior_title: str
-    threat_category: str
-    requires: frozenset[str]
-    any_of: frozenset[str]
-    forbids: frozenset[str]
-    summary_template: str
-    primary_effect: str
-    recommended_action: str
-
-
-PURPOSE_RULES: list[PurposeRule] = [
-    PurposeRule(
-        rule_id='shellcode_encoder_utility',
-        behavior_class='shellcode_tool',
-        behavior_title='Shellcode encode/decode utility',
-        threat_category='dual_use_security_tool',
-        requires=frozenset({'shellcode_transform', 'crypto_xor'}),
-        any_of=frozenset({'cli_interface', 'library_module'}),
-        forbids=frozenset({'network_http', 'subprocess_exec', 'download_remote', 'dynamic_exec'}),
-        summary_template=(
-            'This is a {language} {entry_label} that XOR-encodes or decodes hex shellcode buffers. '
-            'It transforms user-supplied shellcode locally and prints results — no network, subprocess, '
-            'or payload execution primitives were found in source. Dual-use offensive-security utility.'
-        ),
-        primary_effect='Transform shellcode bytes with XOR locally (encode/decode) — offline utility, not a dropper.',
-        recommended_action=(
-            'Treat as dual-use shellcode tooling. Safe to study in an isolated lab; investigate delivery '
-            'context if found outside authorized security work.'
-        ),
-    ),
-    PurposeRule(
-        rule_id='linux_privesc_enumerator',
-        behavior_class='linux_privesc_enum',
-        behavior_title='Linux privilege-escalation enumerator',
-        threat_category='dual_use_security_tool',
-        requires=frozenset({'privesc_enumeration'}),
-        any_of=frozenset({'library_module', 'cli_interface', 'file_enumeration', 'credential_access'}),
-        forbids=frozenset({'sms_abuse_api'}),
-        summary_template=(
-            'This behaves like a Linux privilege-escalation enumeration script. It searches for '
-            'misconfigurations, SUID/sudo paths, cron/capability issues, and embeds pentest reference material. '
-            'Dual-use: legitimate in scoped pentests; hostile if run without authorization.'
-        ),
-        primary_effect='Enumerate the local Linux host for privilege-escalation paths.',
-        recommended_action=(
-            'Treat as offensive-security enumeration. Authorized pentest use only — investigate if unmanaged on production.'
-        ),
-    ),
-    PurposeRule(
-        rule_id='metasploit_module',
-        behavior_class='metasploit_module',
-        behavior_title='Metasploit Framework module',
-        threat_category='dual_use_security_tool',
-        requires=frozenset({'metasploit_framework'}),
-        any_of=frozenset({'library_module', 'cli_interface'}),
-        forbids=frozenset(),
-        summary_template=(
-            'This is Metasploit Framework module source, intended to run inside msfconsole — not a standalone implant. '
-            '{role_line}Dual-use exploit-framework component from Rapid7 upstream patterns.'
-        ),
-        primary_effect='Extend Metasploit Framework with module capability — runs inside msfconsole.',
-        recommended_action=(
-            'Treat as exploit-framework module source. Lab or authorized engagement only; correlate delivery path on production.'
-        ),
-    ),
-    PurposeRule(
-        rule_id='sms_otp_abuse',
-        behavior_class='sms_otp_abuse',
-        behavior_title='SMS / OTP abuse tool',
-        threat_category='abuse_tool',
-        requires=frozenset({'sms_abuse_api', 'phone_fields'}),
-        any_of=frozenset({'network_http'}),
-        forbids=frozenset(),
-        summary_template=(
-            'This automates HTTP requests to third-party registration or password-reset APIs using phone-number fields — '
-            'consistent with SMS/OTP abuse tooling rather than traditional C2 malware.'
-        ),
-        primary_effect='Trigger SMS/OTP messages via third-party service APIs.',
-        recommended_action='Do not run against phone numbers you do not own. Block if deployed for harassment.',
-    ),
-    PurposeRule(
-        rule_id='script_dropper',
-        behavior_class='script_dropper',
-        behavior_title='Script-based dropper / downloader',
-        threat_category='malware',
-        requires=frozenset({'download_remote'}),
-        any_of=frozenset({'dynamic_exec', 'subprocess_exec'}),
-        forbids=frozenset(),
-        summary_template=(
-            'This script downloads remote content and contains execution primitives — staged dropper/downloader behavior.'
-        ),
-        primary_effect='Download external content and execute or invoke follow-on payload.',
-        recommended_action='Do not execute on production. Quarantine and investigate delivery path.',
-    ),
-    PurposeRule(
-        rule_id='credential_exfil',
-        behavior_class='credential_stealer',
-        behavior_title='Credential / data theft',
-        threat_category='malware',
-        requires=frozenset({'webhook_exfil'}),
-        any_of=frozenset({'credential_access', 'network_http'}),
-        forbids=frozenset(),
-        summary_template='Behavior suggests data exfiltration via messaging/webhook channels.',
-        primary_effect='Exfiltrate data via webhook or bot endpoints.',
-        recommended_action='Do not execute. Quarantine and investigate exposure.',
-    ),
-    PurposeRule(
-        rule_id='reverse_shell',
-        behavior_class='remote_access',
-        behavior_title='Reverse shell / remote command channel',
-        threat_category='malware',
-        requires=frozenset({'network_socket'}),
-        any_of=frozenset({'subprocess_exec', 'dynamic_exec'}),
-        forbids=frozenset(),
-        summary_template=(
-            'This implements or references a reverse-shell style channel — raw sockets or bash/tcp '
-            'redirection combined with command execution. Treat as remote-access malware unless proven '
-            'part of an authorized test.'
-        ),
-        primary_effect='Open a command channel to a remote host (reverse shell pattern).',
-        recommended_action='Do not execute. Quarantine and investigate how it was delivered.',
-    ),
-    PurposeRule(
-        rule_id='obfuscated_dropper',
-        behavior_class='script_dropper',
-        behavior_title='Obfuscated downloader / dropper',
-        threat_category='malware',
-        requires=frozenset({'download_remote'}),
-        any_of=frozenset({'dynamic_exec', 'subprocess_exec', 'crypto_base64', 'packer_obfuscation'}),
-        forbids=frozenset({'privesc_enumeration'}),
-        summary_template=(
-            'Downloads remote content and uses execution or de-obfuscation primitives — staged dropper pattern.'
-        ),
-        primary_effect='Download and execute or decode a follow-on payload.',
-        recommended_action='Do not execute on production. Quarantine and analyze delivery path.',
-    ),
-    PurposeRule(
-        rule_id='ransomware_like',
-        behavior_class='ransomware_pattern',
-        behavior_title='Ransomware-like file encryption pattern',
-        threat_category='malware',
-        requires=frozenset({'crypto_generic', 'file_write', 'file_enumeration'}),
-        any_of=frozenset({'file_read'}),
-        forbids=frozenset(),
-        summary_template=(
-            'Walks directories, reads files, applies encryption, and writes output — ransomware-like behavior. '
-            'Verify whether this is a security research sample or active malware.'
-        ),
-        primary_effect='Enumerate and encrypt user files (ransomware-like workflow).',
-        recommended_action='Do not execute. Isolate host and preserve forensic copies.',
-    ),
-    PurposeRule(
-        rule_id='network_client_utility',
-        behavior_class='generic_network_tool',
-        behavior_title='HTTP/network client utility',
-        threat_category='unknown',
-        requires=frozenset({'network_http'}),
-        any_of=frozenset({'cli_interface', 'library_module'}),
-        forbids=frozenset({'subprocess_exec', 'dynamic_exec', 'download_remote', 'webhook_exfil', 'persistence'}),
-        summary_template=(
-            'This is a {language} {entry_label} that performs HTTP or network client operations without '
-            'download-and-execute, persistence, or exfiltration primitives in source.'
-        ),
-        primary_effect='Contact external HTTP/network endpoints — client utility, not a dropper by itself.',
-        recommended_action='Review URLs/endpoints and deployment context before running.',
-    ),
-    PurposeRule(
-        rule_id='pe_implant_loader',
-        behavior_class='process_injection',
-        behavior_title='PE loader / injection-capable binary',
-        threat_category='malware',
-        requires=frozenset({'pe_injection'}),
-        any_of=frozenset({'pe_packing', 'network_http', 'anti_analysis'}),
-        forbids=frozenset(),
-        summary_template=(
-            'PE imports indicate process manipulation or injection, with optional packing or anti-analysis. '
-            'Typical of loaders, injectors, or implants — not a standalone document or config file.'
-        ),
-        primary_effect='Manipulate or inject into other processes (PE import surface).',
-        recommended_action='Do not execute. Static analysis only unless detonated in an isolated sandbox.',
-    ),
-]
 
 
 def _cap_ids(hits: list[CapabilityHit]) -> set[str]:
@@ -527,6 +343,14 @@ def _text_capability_scan(text: str, *, filename: str = '') -> list[CapabilityHi
 
     if 'bf_xor' in name_lower or ('xor' in name_lower and 'bf' in name_lower):
         add('metasploit_framework', 'Filename consistent with Metasploit auxiliary module', 'medium')
+
+    for cap_id, evidence_list in scan_extended_capabilities(text, filename=filename).items():
+        for ev in evidence_list:
+            add(cap_id, ev)
+
+    if not hits and len(text.strip()) > 100 and not re.search(r'^\s*(?:def |function |class |import |#include)', text, re.M):
+        if re.search(r'^\s*[\{\[]|^\s*\w+\s*:', text, re.M):
+            add('config_file_only', 'Mostly configuration/data structure with minimal executable logic', 'medium')
 
     return list(hits.values())
 
