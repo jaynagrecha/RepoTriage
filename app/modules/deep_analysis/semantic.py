@@ -89,7 +89,255 @@ def _entry_label(entry_point: str) -> str:
         'library': 'library module',
         'script': 'script',
         'binary': 'compiled binary',
+        'config': 'configuration file',
     }.get(entry_point, 'program')
+
+
+CONFIG_EXTENSIONS = frozenset({
+    '.iml', '.xml', '.xsl', '.xslt', '.json', '.yaml', '.yml', '.toml',
+    '.ini', '.properties', '.cfg', '.conf', '.plist', '.csproj', '.sln',
+    '.props', '.targets', '.gradle', '.pom', '.nuspec', '.resx',
+})
+
+
+def _detect_config_kind(filename: str, text: str, static: dict[str, Any] | None) -> str | None:
+    ext = Path(filename or '').suffix.lower()
+    typed = ((static or {}).get('typed_analysis') or {})
+    fmt = str(typed.get('format') or '').lower()
+    stripped = text.lstrip()
+
+    if ext == '.iml' or (ext in {'.xml', '.xsl', '.xslt'} and re.search(r'<module\b', text, re.I)):
+        return 'idea_module'
+    if ext == '.pom' or (ext == '.xml' and 'maven.apache.org/POM' in text):
+        return 'maven_pom'
+    if ext in {'.csproj', '.sln', '.props', '.targets', '.gradle', '.nuspec'}:
+        return 'build_metadata'
+    if ext in CONFIG_EXTENSIONS or fmt in {'xml', 'json', 'yaml'}:
+        if stripped.startswith('<?xml') or fmt == 'xml':
+            return 'xml'
+        if ext in {'.json', '.yaml', '.yml', '.toml', '.ini', '.properties', '.cfg', '.conf'}:
+            return 'structured'
+        if ext in {'.xml', '.xsl', '.xslt', '.plist'}:
+            return 'xml'
+    if stripped.startswith('<?xml') and not re.search(r'^\s*(?:def |function |class |import |#include)', text, re.M):
+        if re.search(r'<module\b', text, re.I):
+            return 'idea_module'
+        return 'xml'
+    return None
+
+
+def _parse_config_facts(text: str, filename: str, kind: str) -> dict[str, Any]:
+    facts: dict[str, Any] = {
+        'document_kind': kind,
+        'module_type': None,
+        'source_folders': [],
+        'exclude_folders': [],
+        'dependencies': [],
+        'language_level': None,
+        'is_maven': False,
+        'is_burp_extender': False,
+        'root_element': None,
+    }
+    if kind == 'idea_module':
+        m = re.search(r'<module\b[^>]*\btype="([^"]+)"', text, re.I)
+        facts['module_type'] = m.group(1) if m else 'JAVA_MODULE'
+        facts['is_maven'] = bool(re.search(r'MavenProjectsManager|Maven:', text, re.I))
+        facts['source_folders'] = re.findall(
+            r'<sourceFolder[^>]+url="[^"]+\$MODULE_DIR\$/([^"]+)"', text, re.I,
+        )
+        facts['exclude_folders'] = re.findall(
+            r'<excludeFolder[^>]+url="[^"]+\$MODULE_DIR\$/([^"]+)"', text, re.I,
+        )
+        facts['dependencies'] = re.findall(
+            r'<orderEntry[^>]+name="Maven:\s*([^"]+)"', text, re.I,
+        )
+        ll = re.search(r'LANGUAGE_LEVEL="([^"]+)"', text)
+        facts['language_level'] = ll.group(1) if ll else None
+        lower = text.lower()
+        facts['is_burp_extender'] = 'burp-extender' in lower or 'burp.extender' in lower
+    elif kind in {'xml', 'maven_pom', 'build_metadata'}:
+        root = re.search(r'<\s*([A-Za-z_][\w.-]*)', text)
+        facts['root_element'] = root.group(1) if root else None
+        if kind == 'maven_pom' or 'maven.apache.org/POM' in text:
+            facts['is_maven'] = True
+            facts['dependencies'] = re.findall(r'<artifactId>([^<]+)</artifactId>', text)[:8]
+    return facts
+
+
+def _config_capability_scan(text: str, filename: str, kind: str) -> list[CapabilityHit]:
+    hits: list[CapabilityHit] = []
+    facts = _parse_config_facts(text, filename, kind)
+
+    def add(cap_id: str, evidence: str, confidence: str = 'high') -> None:
+        hits.append(CapabilityHit(cap_id, confidence, [evidence[:160]]))
+
+    add('config_file_only', f'{kind.replace("_", " ")} document — no executable script logic', 'high')
+    if kind == 'idea_module':
+        add('idea_module_descriptor', 'IntelliJ `.iml` module root element', 'high')
+        if facts['is_maven']:
+            add('maven_module_metadata', 'Maven module markers in IDEA module file', 'high')
+    elif kind in {'xml', 'maven_pom', 'build_metadata'}:
+        add('xml_config_document', f'XML document ({facts.get("root_element") or "root element"})', 'high')
+        if facts.get('is_maven'):
+            add('maven_module_metadata', 'Maven POM/project metadata', 'high')
+    return hits
+
+
+def _build_config_summary(
+    *,
+    filename: str,
+    kind: str,
+    facts: dict[str, Any],
+    rule: PurposeRule | None,
+) -> tuple[str, str, list[str], str, str, int]:
+    bullets: list[str] = []
+    ext = Path(filename).suffix.lower() or 'file'
+
+    if kind == 'idea_module':
+        title = 'IntelliJ IDEA module descriptor'
+        if facts.get('is_maven'):
+            title += ' (Maven/Java)'
+        if facts.get('is_burp_extender'):
+            title += ' — Burp Suite extender project'
+
+        bullets.append(f'Document type: IntelliJ `.iml` module configuration ({ext}).')
+        if facts.get('module_type'):
+            bullets.append(f'Module type: {facts["module_type"]}.')
+        if facts.get('language_level'):
+            bullets.append(f'Language level: {facts["language_level"]}.')
+        if facts.get('source_folders'):
+            bullets.append(f'Source roots: {", ".join(facts["source_folders"][:6])}.')
+        if facts.get('exclude_folders'):
+            bullets.append(f'Excluded paths: {", ".join(facts["exclude_folders"][:4])}.')
+        if facts.get('dependencies'):
+            bullets.append(f'Library dependencies: {", ".join(facts["dependencies"][:5])}.')
+        bullets.append('Not executable code — consumed by IntelliJ/IDEA and build tools only.')
+
+        summary = (
+            f'`{filename}` is an IntelliJ IDEA module descriptor, not a runnable script. '
+            f'It defines Java/Maven project layout'
+        )
+        if facts.get('dependencies'):
+            summary += f' and declares dependencies such as `{facts["dependencies"][0]}`'
+        if facts.get('is_burp_extender'):
+            summary += ' — consistent with a Burp Suite extender (Java) project'
+        summary += '.'
+        behavior_class = rule.behavior_class if rule else 'config_metadata'
+        threat = rule.threat_category if rule else 'unknown'
+        score = 42 if rule else 30
+    elif kind == 'maven_pom':
+        title = 'Maven POM project descriptor'
+        bullets.append('Document type: Maven `pom.xml` project metadata.')
+        if facts.get('dependencies'):
+            bullets.append(f'Artifacts referenced: {", ".join(facts["dependencies"][:6])}.')
+        bullets.append('Build/project configuration — not standalone executable logic.')
+        summary = f'`{filename}` is Maven project metadata (POM), not executable malware source.'
+        behavior_class = 'config_metadata'
+        threat = 'unknown'
+        score = 36
+    elif kind == 'structured':
+        title = f'Structured configuration ({ext.lstrip(".") or "data"})'
+        bullets.append(f'Document type: structured config/data file ({ext or "unknown extension"}).')
+        bullets.append('No functions, imports, or script execution primitives detected.')
+        summary = f'`{filename}` is a structured configuration or data file with no executable script logic.'
+        behavior_class = 'config_metadata'
+        threat = 'unknown'
+        score = 24
+    else:
+        title = 'XML / build configuration document'
+        root = facts.get('root_element') or 'unknown'
+        bullets.append(f'Document type: XML configuration (root element `<{root}>`).')
+        bullets.append('No script functions or execution primitives detected in this file.')
+        summary = f'`{filename}` is XML project or tool configuration — not a standalone executable script.'
+        behavior_class = rule.behavior_class if rule else 'config_metadata'
+        threat = rule.threat_category if rule else 'unknown'
+        score = 30 if rule else 22
+
+    if rule:
+        behavior_class = rule.behavior_class
+        threat = rule.threat_category
+        score = max(score, 48)
+
+    return title, summary, bullets, behavior_class, threat, score
+
+
+def _analyze_config_semantic(
+    text: str,
+    filename: str,
+    static: dict[str, Any] | None,
+    kind: str,
+) -> dict[str, Any]:
+    capabilities = _config_capability_scan(text, filename, kind)
+    caps = _cap_ids(capabilities)
+    facts = _parse_config_facts(text, filename, kind)
+
+    best_rule: PurposeRule | None = None
+    best_score = 0
+    best_reasons: list[str] = []
+    for rule in PURPOSE_RULES:
+        score, reasons = _score_rule(rule, caps)
+        if score > best_score:
+            best_score = score
+            best_rule = rule
+            best_reasons = reasons
+
+    title, summary, bullets, behavior_class, threat_category, confidence_score = _build_config_summary(
+        filename=filename,
+        kind=kind,
+        facts=facts,
+        rule=best_rule if best_score >= 14 else None,
+    )
+
+    if best_rule and best_score >= 14:
+        summary = best_rule.summary_template.format(
+            language='xml',
+            entry_label='configuration file',
+            role_line='',
+        )
+        if kind == 'idea_module' and facts.get('is_burp_extender'):
+            summary += ' Project context: Burp Suite extender (Java API dependency present).'
+        what_it_does = best_reasons + bullets[:6]
+        purpose_rule_id = best_rule.rule_id
+        inference_method = 'capability_rules'
+        confidence = 'high' if best_score >= 28 else 'medium'
+    else:
+        what_it_does = bullets
+        purpose_rule_id = None
+        inference_method = 'config_metadata'
+        confidence = 'medium' if kind == 'idea_module' else 'low'
+
+    return {
+        'engine': 'repotriage_semantic_v2',
+        'language': 'xml' if kind != 'structured' else 'config',
+        'entry_point': 'config',
+        'ast_parsed': False,
+        'capabilities': [
+            {
+                'id': c.id,
+                'label': CAPABILITY_DEFS.get(c.id, c.id),
+                'confidence': c.confidence,
+                'evidence': c.evidence[:4],
+            }
+            for c in capabilities
+        ],
+        'functions': [],
+        'data_flow': None,
+        'purpose_rule_id': purpose_rule_id,
+        'behavior_class': behavior_class,
+        'behavior_title': title,
+        'summary': summary,
+        'what_it_does': what_it_does,
+        'threat_category': threat_category,
+        'confidence': confidence,
+        'confidence_score': confidence_score,
+        'recommended_action': (
+            best_rule.recommended_action if best_rule and best_score >= 14
+            else 'Configuration/metadata only — review project source files separately for executable logic.'
+        ),
+        'inference_method': inference_method,
+        'rule_score': best_score,
+        'config_facts': facts,
+    }
 
 
 def _extract_cli_description(text: str) -> str | None:
@@ -118,39 +366,60 @@ def _compose_generic_summary(
         bullets.append(f'Detected capabilities: {"; ".join(cap_labels)}.')
     if fn_names:
         bullets.append(f'Key functions: {", ".join(fn_names)}.')
-    if data_flow:
-        bullets.append(f'Data flow: {data_flow}')
 
-    absent: list[str] = []
     present = _cap_ids(caps)
-    for cap_id, label in (
-        ('network_http', 'network HTTP client'),
-        ('subprocess_exec', 'subprocess/shell execution'),
-        ('download_remote', 'remote download/staging'),
-        ('dynamic_exec', 'dynamic eval/exec'),
-    ):
-        if cap_id not in present:
-            absent.append(label)
-    if absent:
-        bullets.append(f'Not observed in source: {", ".join(absent)}.')
+    if cap_labels:
+        absent: list[str] = []
+        for cap_id, label in (
+            ('network_http', 'network HTTP client'),
+            ('subprocess_exec', 'subprocess/shell execution'),
+            ('download_remote', 'remote download/staging'),
+            ('dynamic_exec', 'dynamic eval/exec'),
+        ):
+            if cap_id not in present:
+                absent.append(label)
+        if absent:
+            bullets.append(f'Not observed in source: {", ".join(absent)}.')
 
     purpose_hint = ''
     if cli_description:
         purpose_hint = f' Stated purpose: "{cli_description}".'
 
-    primary_cap = cap_labels[0].split('(')[0].strip().lower() if cap_labels else 'utility script'
-    summary = (
-        f'This {language} {_entry_label(entry_point)} was analyzed from source (AST + capability scan). '
-        f'Primary behavior: {primary_cap}.{purpose_hint} '
-        + (f'Processing path: {data_flow}.' if data_flow else '')
-        + (f' No {"; ".join(absent)} detected.' if absent else '')
-    ).strip()
+    entry = _entry_label(entry_point)
+    if language == 'script' and entry == 'script':
+        kind_label = 'script'
+    elif language in {'script', 'config', 'xml'}:
+        kind_label = entry
+    else:
+        kind_label = f'{language} {entry}'
 
-    title_parts = [language.title(), _entry_label(entry_point)]
+    if cap_labels:
+        primary_cap = cap_labels[0].split('(')[0].strip().lower()
+    elif fn_names:
+        primary_cap = f'helper functions ({", ".join(fn_names[:3])})'
+    else:
+        primary_cap = 'offline utility logic'
+
+    summary_parts = [
+        f'This {kind_label} was analyzed from source (AST + capability scan).',
+        f'Primary behavior: {primary_cap}.{purpose_hint}',
+    ]
+    if data_flow:
+        summary_parts.append(f'Processing path: {data_flow}.')
+    elif not cap_labels and fn_names:
+        summary_parts.append('No network, shell, download, or dynamic-eval primitives observed.')
+    elif not cap_labels:
+        summary_parts.append('No strong malicious capability patterns detected in source.')
+    summary = ' '.join(part.strip() for part in summary_parts if part).strip()
+
+    title_parts = [language.title() if language != 'script' else 'Script', entry if entry != 'script' else '']
+    title_parts = [p for p in title_parts if p]
     if cli_description:
         title_parts.append(cli_description[:60])
     elif cap_labels:
         title_parts.append(cap_labels[0].split('(')[0].strip())
+    elif fn_names:
+        title_parts.append(fn_names[0])
     return ' — '.join(title_parts[:3]), summary, bullets
 
 
@@ -286,7 +555,7 @@ def _text_capability_scan(text: str, *, filename: str = '') -> list[CapabilityHi
         add('crypto_xor', 'XOR operations')
     if re.search(r'base64|b64encode|b64decode|frombase64', lower):
         add('crypto_base64', 'Base64 encode/decode')
-    if re.search(r'encrypt|decrypt|cipher|aes|rc4', lower) and 'crypto_xor' not in hits:
+    if re.search(r'\bencrypt\b|\bdecrypt\b|\bcipher\b|\baes\b|\brc4\b', lower) and 'crypto_xor' not in hits:
         add('crypto_generic', 'Encryption or encoding routines')
 
     if re.search(r'metasploit|meterpreter|Msf::|MetasploitModule|rapid7/metasploit-framework', text, re.I):
@@ -384,17 +653,24 @@ def _infer_language(filename: str, text: str, static: dict[str, Any] | None) -> 
     typed = ((static or {}).get('typed_analysis') or {})
     if typed.get('language'):
         return str(typed['language'])
+    fmt = str(typed.get('format') or '').lower()
     ext = Path(filename or '').suffix.lower()
+    if ext == '.iml' or (fmt == 'xml' and re.search(r'<module\b', text, re.I)):
+        return 'xml'
     mapping = {
         '.py': 'python', '.rb': 'ruby', '.ps1': 'powershell', '.psm1': 'powershell',
         '.js': 'javascript', '.mjs': 'javascript', '.ts': 'javascript',
         '.sh': 'shell', '.bash': 'shell', '.zsh': 'shell',
         '.pl': 'perl', '.lua': 'lua', '.php': 'php',
         '.bat': 'batch', '.cmd': 'batch', '.vbs': 'vbscript', '.vbe': 'vbscript',
-        '.hta': 'html', '.wsf': 'xml',
+        '.hta': 'html', '.wsf': 'xml', '.xml': 'xml', '.xsl': 'xml', '.xslt': 'xml',
+        '.json': 'config', '.yaml': 'config', '.yml': 'config', '.toml': 'config',
+        '.ini': 'config', '.properties': 'config',
     }
     if ext in mapping:
         return mapping[ext]
+    if fmt in {'xml', 'json', 'yaml'}:
+        return fmt if fmt != 'yaml' else 'config'
     if text.startswith('#!'):
         shebang = text.splitlines()[0].lower()
         if 'python' in shebang:
@@ -486,6 +762,10 @@ def analyze_semantic(
         text = path.read_bytes()[:2_000_000].decode('utf-8', errors='ignore')
 
     fname = filename or (path.name if path else 'file')
+    config_kind = _detect_config_kind(fname, text, static)
+    if config_kind:
+        return _analyze_config_semantic(text, fname, static, config_kind)
+
     language = _infer_language(fname, text, static)
     ast_info: dict[str, Any] = {}
     if language == 'python' and text.strip():
