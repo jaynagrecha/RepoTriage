@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .detection_policy import yara_verdict
+
 
 def yara_available() -> bool:
     try:
@@ -51,7 +53,7 @@ rule Suspicious_PE_AntiAnalysis {
         $b = "CheckRemoteDebuggerPresent" nocase
         $c = "NtQueryInformationProcess" nocase
     condition:
-        any of them
+        2 of them
 }
 '''
 
@@ -105,5 +107,5 @@ def scan_file(path: Path, base_dir: Path) -> dict[str, Any]:
                 'strings': [f"{s[1]}:{s[2].decode('utf-8', errors='ignore')[:120]}" for s in (match.strings or [])[:8]],
             })
     result['match_count'] = len(result['matches'])
-    result['verdict'] = 'malicious' if len(result['matches']) >= 2 else ('suspicious' if result['matches'] else 'clean')
+    result['verdict'] = yara_verdict(result['matches'])
     return result

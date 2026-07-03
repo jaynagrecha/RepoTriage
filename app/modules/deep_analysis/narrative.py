@@ -92,7 +92,9 @@ def build_deep_narrative(bundle: dict[str, Any]) -> dict[str, Any]:
         bullets.append('Deep modules ran but found limited additional signal beyond static analysis — try Re-analyse static first, then Deep again.')
 
     assessment = 'Treat as hostile infrastructure. Block hashes/URLs, isolate host, and hunt for sibling files in the same job.'
-    if combined in {'clean', 'needs_review'}:
+    if combined == 'suspicious':
+        assessment = 'Multiple moderate signals detected — investigate in isolation before execution; do not treat as confirmed malware on a single weak indicator.'
+    elif combined in {'clean', 'needs_review'}:
         assessment = 'Deep modules did not add strong malicious signal. Correlate with VT and sibling files before closing.'
 
     return {

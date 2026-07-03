@@ -18,12 +18,13 @@ from .modules.cert_intel import enrich_domains
 from .modules.family_parser import parse_family_indicators
 from .modules.deep_analysis import run_deep_exclusive, build_deep_narrative, build_attack_chain
 from .modules.deep_analysis.intel import enrich_file_intel
+from .modules.detection_policy import combine_deep_verdict
 from .modules.static_analysis.store import load_record
 from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.2'
+PLATFORM_VERSION = '4.0.0-alpha.3'
 LOG = logging.getLogger('repotriage.worker')
 
 
@@ -86,10 +87,20 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     bundle['family_hints'] = parse_family_indicators(path)
     db.save_artifact(job_id, sha256, 'family_hints', bundle['family_hints'], PLATFORM_VERSION)
 
-    bundle['combined_verdict'] = _combined_verdict(bundle, static)
+    verdict, evidence = combine_deep_verdict(
+        static=static,
+        yara=bundle.get('yara'),
+        sandbox_lite=bundle.get('sandbox_lite'),
+        file_intel=bundle.get('file_intel'),
+        ioc_reputation=bundle.get('ioc_reputation'),
+        family_hints=bundle.get('family_hints'),
+        deep_exclusive=bundle.get('deep_exclusive'),
+    )
+    bundle['combined_verdict'] = verdict
+    bundle['verdict_evidence'] = evidence
     bundle['attack_chain'] = build_attack_chain(bundle)
     bundle['deep_narrative'] = build_deep_narrative(bundle)
-    bundle['confidence_explanation'] = _confidence_explanation(bundle, static)
+    bundle['confidence_explanation'] = _confidence_explanation(bundle, static, evidence)
     db.save_artifact(job_id, sha256, 'deep_analysis_bundle', bundle, PLATFORM_VERSION)
 
     if bundle['combined_verdict'] in {'malicious', 'suspicious'}:
@@ -98,54 +109,29 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     return bundle
 
 
-def _combined_verdict(bundle: dict, static: dict | None = None) -> str:
-    scores = []
-    static_v = ((static or {}).get('static_verdict') or {}).get('verdict')
-    if static_v in {'malicious', 'suspicious'}:
-        scores.append(static_v)
-    yara_v = (bundle.get('yara') or {}).get('verdict')
-    if yara_v in {'malicious', 'suspicious'}:
-        scores.append(yara_v)
-    sb_v = (bundle.get('sandbox_lite') or {}).get('verdict')
-    if sb_v in {'malicious', 'suspicious'}:
-        scores.append(sb_v)
-    if (bundle.get('ioc_reputation') or {}).get('malicious_urls', 0) > 0:
-        scores.append('malicious')
-    if (bundle.get('file_intel') or {}).get('malwarebazaar', {}).get('found'):
-        scores.append('malicious')
-    if (bundle.get('family_hints') or {}).get('match_count', 0) >= 2:
-        scores.append('suspicious')
-    deep = bundle.get('deep_exclusive') or {}
-    if (deep.get('script') or {}).get('likely_stages', 0) >= 3:
-        scores.append('malicious')
-    if (deep.get('pe') or {}).get('high_risk_imports'):
-        scores.append('suspicious')
-    elif (deep.get('pe') or {}).get('informational_imports') and (deep.get('pe') or {}).get('has_strong_injection_chain'):
-        scores.append('suspicious')
-    if 'malicious' in scores:
-        return 'malicious'
-    if 'suspicious' in scores:
-        return 'suspicious'
-    if static_v == 'needs_review':
-        return 'needs_review'
-    return static_v or 'clean'
-
-
-def _confidence_explanation(bundle: dict, static: dict | None = None) -> dict:
+def _confidence_explanation(bundle: dict, static: dict | None = None, evidence: list | None = None) -> dict:
     reasons = []
+    for item in evidence or bundle.get('verdict_evidence') or []:
+        reasons.append({
+            'source': item.get('source'),
+            'tier': item.get('tier'),
+            'label': item.get('source'),
+            'evidence': item.get('detail', '')[:200],
+        })
     for item in (bundle.get('deep_exclusive') or {}).get('delta', {}).get('exclusive_findings') or []:
         reasons.append({'source': 'deep_exclusive', 'label': item.get('type'), 'evidence': item.get('value', '')[:200]})
-    for m in (bundle.get('yara') or {}).get('matches') or []:
-        reasons.append({'source': 'yara', 'label': m.get('rule'), 'evidence': (m.get('meta') or {}).get('description', '')})
-    for b in (bundle.get('sandbox_lite') or {}).get('behaviors') or []:
-        reasons.append({'source': 'sandbox_lite', 'label': b, 'evidence': 'behavioral marker'})
     mb = (bundle.get('file_intel') or {}).get('malwarebazaar') or {}
-    if mb.get('found'):
+    if mb.get('found') and not any(r.get('source') == 'malwarebazaar' for r in reasons):
         reasons.append({'source': 'malwarebazaar', 'label': mb.get('family'), 'evidence': 'Known sample in MalwareBazaar'})
     static_v = ((static or {}).get('static_verdict') or {})
     for sig in (static_v.get('signals') or [])[:3]:
-        reasons.append({'source': 'static_reference', 'label': sig.get('label'), 'evidence': sig.get('evidence')})
-    return {'reasons': reasons[:12], 'upgrade_hint': 'Deep analysis adds execution chains, PE import risk, live CTI, and YARA — beyond fast static RE.'}
+        if int(sig.get('weight') or 0) >= 18:
+            reasons.append({'source': 'static_reference', 'label': sig.get('label'), 'evidence': sig.get('evidence')})
+    return {
+        'reasons': reasons[:12],
+        'policy': 'Conservative: malicious requires 2 strong signals or 1 strong + 1 moderate.',
+        'upgrade_hint': 'Deep analysis adds execution chains, PE import risk, live CTI, and YARA — beyond fast static RE.',
+    }
 
 
 HANDLERS = {

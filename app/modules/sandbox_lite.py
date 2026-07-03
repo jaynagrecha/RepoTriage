@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .detection_policy import sandbox_lite_verdict
 from .static_analysis.script_analyzer import analyze_script
 
 
@@ -16,11 +17,7 @@ NETWORK_PATTERNS = [
 
 
 def run_sandbox_lite(path: Path, *, filename: str | None = None) -> dict[str, Any]:
-    """Render-safe behavioral analysis without executing malware binaries.
-
-    For scripts: pattern + flow analysis only.
-    For binaries: import/string behavior summary (no execution).
-    """
+    """Render-safe behavioral analysis without executing malware binaries."""
     ext = (Path(filename or path.name).suffix or '').lower()
     text = path.read_bytes()[:2_000_000].decode('utf-8', errors='ignore')
     result: dict[str, Any] = {
@@ -44,8 +41,7 @@ def run_sandbox_lite(path: Path, *, filename: str | None = None) -> dict[str, An
             if pattern.search(text):
                 result['behaviors'].append(label)
         result['network_indicators'] = script.get('links') or []
-        if len(result['behaviors']) >= 2 or script.get('logic_summary'):
-            result['verdict'] = 'malicious' if any(x in result['behaviors'] for x in ('download', 'shell')) else 'suspicious'
+        result['verdict'] = sandbox_lite_verdict(result)
         return result
 
     suspicious = []
@@ -54,9 +50,7 @@ def run_sandbox_lite(path: Path, *, filename: str | None = None) -> dict[str, An
     if re.search(r'WriteProcessMemory|CreateRemoteThread|NtCreateThreadEx', text, re.I):
         suspicious.append('process_injection')
     if re.search(r'https?://', text, re.I):
-        suspicious.append('embedded_urls')
         result['network_indicators'] = re.findall(r'https?://[^\s\'\"<>]+', text)[:20]
     result['behaviors'] = suspicious
-    if suspicious:
-        result['verdict'] = 'suspicious'
+    result['verdict'] = sandbox_lite_verdict(result)
     return result
