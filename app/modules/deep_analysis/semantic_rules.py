@@ -257,6 +257,10 @@ def build_purpose_rules() -> list[PurposeRule]:
             forbids={'network_http', 'subprocess_exec', 'dynamic_exec', 'download_remote'},
             summary='Configuration or data file with minimal executable logic.',
             effect='Settings, metadata, or data — not a runnable script.'),
+        _mk('python_marshal_stub', 'obfuscated_dropper', 'Obfuscated Python marshal/exec stub', 'malware',
+            {'python_marshal_payload', 'dynamic_exec'}, {'packer_obfuscation'},
+            summary='Python dropper stub that embeds marshal bytecode and executes it via exec() — not readable source.',
+            effect='Loads embedded bytecode and executes it in-process (stager/dropper pattern).', action=_M),
     ]
 
     seen: set[str] = set()

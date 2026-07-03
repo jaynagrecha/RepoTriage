@@ -18,6 +18,7 @@ from .universal import analyze_universal
 from .verdict import build_verdict
 from .indicators import build_extracted_indicators
 from .narrative import build_analyst_narrative
+from .limits import read_bytes_capped
 from .versioning import STATIC_ANALYSIS_VERSION
 
 
@@ -108,8 +109,8 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
         raise StaticAnalysisError('Cached file not found')
 
     profile = classify_file(path, declared_type, original_filename=filename)
+    raw, full_size, truncated = read_bytes_capped(path)
     universal = analyze_universal(path)
-    raw = path.read_bytes()
     deobfuscation = deobfuscate_bytes(raw)
     typed = _typed_analysis(path, profile, filename=filename)
 
@@ -149,6 +150,10 @@ def analyze_file(path: Path, *, filename: str | None = None, declared_type: str 
     report['analyst_narrative'] = build_analyst_narrative(report, vt_verdict=vt_verdict)
     if vt_verdict:
         report['vt_verdict'] = vt_verdict
+    if truncated:
+        report['analysis_note'] = (
+            f'Large file ({full_size} bytes) — static analysis capped to first {len(raw)} bytes.'
+        )
     return report
 
 

@@ -90,7 +90,7 @@ EXTENDED_CAPABILITY_DEFS: dict[str, str] = {
     'config_file_only': 'Configuration or data file (low logic)',
     'idea_module_descriptor': 'IntelliJ IDEA module descriptor (.iml)',
     'maven_module_metadata': 'Maven/Java project module metadata',
-    'xml_config_document': 'XML configuration or project document',
+    'python_marshal_payload': 'Python marshal/exec embedded bytecode stub',
     'unit_test_code': 'Unit test / test harness code',
     'build_script': 'Build/CI script (make, npm, gradle)',
     'doc_generator': 'Documentation generator',

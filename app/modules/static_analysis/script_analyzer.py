@@ -91,8 +91,11 @@ def detect_script_language(path: Path, text: str) -> str:
     return ext or 'script'
 
 
+from .limits import read_bytes_capped
+
+
 def analyze_script(path: Path) -> dict[str, Any]:
-    raw = path.read_bytes()
+    raw, _size, truncated = read_bytes_capped(path)
     text = raw.decode('utf-8', errors='ignore')
     language = detect_script_language(path, text)
     matches: list[dict[str, Any]] = []
@@ -119,6 +122,7 @@ def analyze_script(path: Path) -> dict[str, Any]:
         'language': language,
         'line_count': line_count,
         'char_count': len(text),
+        'truncated_for_analysis': truncated,
         'pattern_matches': matches[:60],
         'functions': functions,
         'logic_summary': logic_summary,

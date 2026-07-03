@@ -22,7 +22,7 @@ router = APIRouter(prefix='/api/v4', tags=['v4'])
 
 async def _process_inline(db: PlatformDB, task_id: str) -> None:
     queue = TaskQueue(db)
-    task = queue.claim()
+    task = queue.claim_task(task_id)
     if task:
         await process_task(db, task)
 

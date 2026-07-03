@@ -25,10 +25,19 @@ from .modules.detection_policy import combine_deep_verdict
 from .modules.static_analysis.store import load_record
 from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
+from .modules.integrations import send_webhook
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.16'
+PLATFORM_VERSION = '4.0.0-alpha.17'
 LOG = logging.getLogger('repotriage.worker')
+
+
+MAX_DEEP_SAMPLE_BYTES = int(os.getenv('DEEP_ANALYSIS_SAMPLE_BYTES', str(2 * 1024 * 1024)))
+
+
+def _read_sample_text(path: Path, limit: int | None = None) -> str:
+    cap = limit or MAX_DEEP_SAMPLE_BYTES
+    return path.read_bytes()[:cap].decode('utf-8', errors='ignore')
 
 
 async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
@@ -52,22 +61,24 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
         static = await analyze_file_async(path, filename=filename, declared_type=file_type, sha256=sha256, vt_verdict=vt_verdict)
         bundle['static_reference'] = {'available': True, 'verdict': (static.get('static_verdict') or {}).get('verdict_label'), 'note': 'static was not cached; ran during deep pass'}
 
-    bundle['deep_exclusive'] = run_deep_exclusive(path, filename=filename, static=static)
+    bundle['deep_exclusive'] = await asyncio.to_thread(
+        run_deep_exclusive, path, filename=filename, static=static,
+    )
     db.save_artifact(job_id, sha256, 'deep_exclusive', bundle['deep_exclusive'], PLATFORM_VERSION)
 
-    bundle['yara'] = yara_scan_file(path, BASE_DIR)
+    bundle['yara'] = await asyncio.to_thread(yara_scan_file, path, BASE_DIR)
     db.save_artifact(job_id, sha256, 'yara', bundle['yara'], PLATFORM_VERSION)
 
-    bundle['sandbox_lite'] = run_sandbox_lite(path, filename=filename)
+    bundle['sandbox_lite'] = await asyncio.to_thread(run_sandbox_lite, path, filename=filename)
     db.save_artifact(job_id, sha256, 'sandbox_lite', bundle['sandbox_lite'], PLATFORM_VERSION)
 
     if filename.lower().endswith(('.docm', '.xlsm', '.pptm', '.docx', '.xlsx', '.pptx')):
-        bundle['macros'] = extract_office_macros(path)
+        bundle['macros'] = await asyncio.to_thread(extract_office_macros, path)
         db.save_artifact(job_id, sha256, 'macros', bundle['macros'], PLATFORM_VERSION)
 
-    ssdeep = compute_ssdeep(path)
+    ssdeep = await asyncio.to_thread(compute_ssdeep, path)
     db.upsert_fingerprint(sha256, ssdeep, job_id, filename)
-    bundle['similarity'] = similarity_report(BASE_DIR, sha256, ssdeep, db)
+    bundle['similarity'] = await asyncio.to_thread(similarity_report, BASE_DIR, sha256, ssdeep, db)
     db.save_artifact(job_id, sha256, 'similarity', bundle['similarity'], PLATFORM_VERSION)
 
     indicators = build_extracted_indicators(static) if static else {}
@@ -87,12 +98,13 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     bundle['cert_intel'] = await enrich_domains(domains)
     db.save_artifact(job_id, sha256, 'cert_intel', bundle['cert_intel'], PLATFORM_VERSION)
 
-    bundle['family_hints'] = parse_family_indicators(path)
+    bundle['family_hints'] = await asyncio.to_thread(parse_family_indicators, path)
     db.save_artifact(job_id, sha256, 'family_hints', bundle['family_hints'], PLATFORM_VERSION)
 
-    sample_text = path.read_bytes()[:2_000_000].decode('utf-8', errors='ignore')
+    sample_text = await asyncio.to_thread(_read_sample_text, path)
 
-    bundle['semantic'] = analyze_semantic(
+    bundle['semantic'] = await asyncio.to_thread(
+        analyze_semantic,
         path,
         filename=filename,
         sample_text=sample_text,
@@ -109,7 +121,8 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
         )
     db.save_artifact(job_id, sha256, 'semantic', bundle['semantic'], PLATFORM_VERSION)
 
-    verdict, evidence = combine_deep_verdict(
+    verdict, evidence = await asyncio.to_thread(
+        combine_deep_verdict,
         static=static,
         yara=bundle.get('yara'),
         sandbox_lite=bundle.get('sandbox_lite'),
@@ -120,10 +133,14 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     )
     bundle['combined_verdict'] = verdict
     bundle['verdict_evidence'] = evidence
-    bundle['behavior'] = interpret_behavior(bundle, static=static, sample_text=sample_text)
-    bundle['attack_chain'] = build_attack_chain(bundle)
-    bundle['deep_narrative'] = build_deep_narrative(bundle)
-    bundle['confidence_explanation'] = _confidence_explanation(bundle, static, evidence)
+    bundle['behavior'] = await asyncio.to_thread(
+        interpret_behavior, bundle, static=static, sample_text=sample_text,
+    )
+    bundle['attack_chain'] = await asyncio.to_thread(build_attack_chain, bundle)
+    bundle['deep_narrative'] = await asyncio.to_thread(build_deep_narrative, bundle)
+    bundle['confidence_explanation'] = await asyncio.to_thread(
+        _confidence_explanation, bundle, static, evidence,
+    )
     db.save_artifact(job_id, sha256, 'deep_analysis_bundle', bundle, PLATFORM_VERSION)
 
     if bundle['combined_verdict'] in {'malicious', 'suspicious'}:

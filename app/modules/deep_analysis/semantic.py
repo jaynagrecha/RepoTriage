@@ -747,6 +747,92 @@ def _analyze_binary_semantic(pe_deep: dict[str, Any], text: str, filename: str) 
     }
 
 
+def _analyze_python_marshal_stub(text: str, filename: str) -> dict[str, Any] | None:
+    if Path(filename or '').suffix.lower() != '.py':
+        return None
+    if len(text) < 24:
+        return None
+    head = text[:16000]
+    has_marshal = bool(re.search(r'marshal\.loads|py_compile|types\.CodeType|imp\.load_module', head, re.I))
+    has_exec = bool(re.search(r'\bexec\s*\(', head))
+    binaryish = '\x00' in text[:8192] or bool(re.search(r'[\x00-\x08\x0e-\x1f]', text[:4096]))
+    if not has_exec or not (has_marshal or binaryish):
+        return None
+
+    capabilities = [
+        CapabilityHit('python_marshal_payload', 'high', ['marshal / embedded bytecode loader stub']),
+        CapabilityHit('dynamic_exec', 'high', ['exec() launches embedded payload']),
+    ]
+    if binaryish or len(re.findall(r'\\x[0-9a-fA-F]{2}', head)) >= 8:
+        capabilities.append(CapabilityHit('packer_obfuscation', 'medium', ['Binary or heavy hex-escaped payload content']))
+    caps = _cap_ids(capabilities)
+
+    best_rule: PurposeRule | None = None
+    best_score = 0
+    best_reasons: list[str] = []
+    for rule in PURPOSE_RULES:
+        score, reasons = _score_rule(rule, caps)
+        if score > best_score:
+            best_score = score
+            best_rule = rule
+            best_reasons = reasons
+
+    title = 'Obfuscated Python marshal/exec stub'
+    summary = (
+        f'`{filename}` is not normal Python source — it embeds marshal bytecode (or binary payload data) '
+        'and uses exec() to run it. Treat as a dropper/stager; readable logic is hidden inside the embedded blob.'
+    )
+    bullets = [
+        'Stub pattern: embedded marshal/binary payload executed via exec().',
+        'Readable Python source is minimal — primary behavior is inside the embedded bytecode.',
+        'Static review should focus on decoded/unpacked output, not this wrapper file alone.',
+    ]
+    if binaryish:
+        bullets.append('File contains binary/non-text bytes — typical of packed or compiled-in-place payloads.')
+
+    behavior_class = 'obfuscated_dropper'
+    threat_category = 'malware'
+    purpose_rule_id = None
+    inference_method = 'marshal_stub'
+    confidence = 'high'
+    confidence_score = 72
+
+    if best_rule and best_score >= 14:
+        behavior_class = best_rule.behavior_class
+        title = best_rule.behavior_title
+        summary = best_rule.summary_template.format(language='python', entry_label='script', role_line='')
+        threat_category = best_rule.threat_category
+        purpose_rule_id = best_rule.rule_id
+        inference_method = 'capability_rules'
+        what_it_does = best_reasons + bullets[:4]
+    else:
+        what_it_does = bullets
+
+    return {
+        'engine': 'repotriage_semantic_v2',
+        'language': 'python',
+        'entry_point': 'script',
+        'ast_parsed': False,
+        'capabilities': [
+            {'id': c.id, 'label': CAPABILITY_DEFS.get(c.id, c.id), 'confidence': c.confidence, 'evidence': c.evidence[:4]}
+            for c in capabilities
+        ],
+        'functions': [],
+        'data_flow': 'Embedded marshal bytecode → exec() → in-process payload execution',
+        'purpose_rule_id': purpose_rule_id,
+        'behavior_class': behavior_class,
+        'behavior_title': title,
+        'summary': summary,
+        'what_it_does': what_it_does,
+        'threat_category': threat_category,
+        'confidence': confidence,
+        'confidence_score': confidence_score,
+        'recommended_action': 'Do not execute. Quarantine and analyze unpacked/decoded payload in an isolated VM.',
+        'inference_method': inference_method,
+        'rule_score': best_score,
+    }
+
+
 def analyze_semantic(
     path: Path | None,
     *,
@@ -762,6 +848,9 @@ def analyze_semantic(
         text = path.read_bytes()[:2_000_000].decode('utf-8', errors='ignore')
 
     fname = filename or (path.name if path else 'file')
+    marshal_stub = _analyze_python_marshal_stub(text, fname)
+    if marshal_stub:
+        return marshal_stub
     config_kind = _detect_config_kind(fname, text, static)
     if config_kind:
         return _analyze_config_semantic(text, fname, static, config_kind)

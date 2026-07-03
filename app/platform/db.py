@@ -144,6 +144,20 @@ class PlatformDB:
             )
             return dict(row)
 
+    def claim_task(self, task_id: str) -> dict[str, Any] | None:
+        now = _utc_now()
+        with self.connect() as conn:
+            row = conn.execute('SELECT * FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+            if not row or row['status'] != 'queued':
+                return None
+            updated = conn.execute(
+                "UPDATE tasks SET status='running', started_at=?, updated_at=?, attempts=attempts+1 WHERE task_id=? AND status='queued'",
+                (now, now, task_id),
+            )
+            if updated.rowcount != 1:
+                return None
+            return dict(row)
+
     def complete_task(self, task_id: str, result: dict | None = None) -> None:
         now = _utc_now()
         with self.connect() as conn:
