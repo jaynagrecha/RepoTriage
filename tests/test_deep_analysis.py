@@ -37,5 +37,10 @@ class TestDeepAnalysis(unittest.TestCase):
             path.unlink(missing_ok=True)
 
 
-if __name__ == '__main__':
-    unittest.main()
+    def test_domain_merge_without_c2_domains(self):
+        """Regression: operator precedence caused list + None when c2_domains missing."""
+        domains_a = []
+        script = {}  # no c2_domains key
+        merged = (domains_a or []) + (script.get('c2_domains') or [])
+        self.assertEqual(merged, [])
+

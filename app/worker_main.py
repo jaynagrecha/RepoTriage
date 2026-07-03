@@ -69,6 +69,7 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     indicators = build_extracted_indicators(static) if static else {}
     pe_embedded = (bundle['deep_exclusive'].get('pe') or {}).get('embedded_urls') or []
     script_urls = (bundle['deep_exclusive'].get('script') or {}).get('c2_urls') or []
+    script_domains = (bundle['deep_exclusive'].get('script') or {}).get('c2_domains') or []
     merged_iocs = dict(indicators)
     merged_iocs['urls'] = list(dict.fromkeys((indicators.get('urls') or []) + pe_embedded + script_urls))[:40]
 
@@ -78,7 +79,7 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     bundle['ioc_reputation'] = await enrich_indicators(merged_iocs, BASE_DIR)
     db.save_artifact(job_id, sha256, 'ioc_reputation', bundle['ioc_reputation'], PLATFORM_VERSION)
 
-    domains = list(dict.fromkeys((indicators.get('domains') or []) + (bundle['deep_exclusive'].get('script') or {}).get('c2_domains') or []))[:12]
+    domains = list(dict.fromkeys((indicators.get('domains') or []) + script_domains))[:12]
     bundle['cert_intel'] = await enrich_domains(domains)
     db.save_artifact(job_id, sha256, 'cert_intel', bundle['cert_intel'], PLATFORM_VERSION)
 
