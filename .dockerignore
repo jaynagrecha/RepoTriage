@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+downloads
+extracted
+reports
+quarantine
+data/jobs
+data/*.db
+data/job_cache
+*.md
+tests

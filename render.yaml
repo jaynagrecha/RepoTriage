@@ -1,4 +1,4 @@
-# Render Blueprint — web + worker on Render only (mount persistent disk at /var/data)
+# Render Blueprint — web + worker (Docker). Native Python also works via requirements.txt only.
 services:
   - type: web
     name: repotriage-web
@@ -11,10 +11,12 @@ services:
       - key: WORKER_ENABLED
         value: "false"
       - key: WORKER_INLINE
-        value: "false"
+        value: "true"
       - key: AUTO_DEEP_ANALYSIS
         value: "false"
       - key: STATIC_ANALYSIS_ENABLED
+        value: "true"
+      - key: TRUST_PROXY
         value: "true"
     disk:
       name: repotriage-data

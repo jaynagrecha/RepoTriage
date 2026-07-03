@@ -8,5 +8,3 @@ py7zr==0.22.0
 rarfile==4.2
 pefile==2024.8.26
 capstone==5.0.3
-yara-python==4.5.1
-ssdeep==3.4

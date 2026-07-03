@@ -34,11 +34,22 @@ YARA_RULES_DIR=
 
 **Deploy on Render**
 
-1. Connect repo and apply `render.yaml` Blueprint (creates `repotriage-web` + `repotriage-worker`).
-2. Mount shared 10GB disk at `/var/data` on both services.
-3. Set secrets: `VT_API_KEY`, optional `GITLAB_TOKEN`, `WEBHOOK_URL`.
-4. Web serves UI/API; worker runs `python -m app.worker_main`.
-5. For local single-process dev without a worker container, set `WORKER_INLINE=true`.
+**Option A — Native Python (simplest, no Docker):**
+
+1. Runtime: **Python 3** (not Docker)
+2. Build command: `pip install -r requirements.txt`
+3. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+4. Add disk mounted at `/var/data`; set `PLATFORM_DATA_DIR=/var/data`, `WORKER_INLINE=true`, `VT_API_KEY`, `TRUST_PROXY=true`
+
+YARA/ssdeep are optional on native Python (Deep analysis still runs; those modules degrade gracefully).
+
+**Option B — Docker (full YARA + ssdeep):**
+
+1. Runtime: **Docker** (uses `Dockerfile` + `requirements-docker.txt`)
+2. Add disk at `/var/data`; same env vars as Option A
+3. Optional second worker: `python -m app.worker_main` with `WORKER_INLINE=false`
+
+**Option C — Blueprint:** apply `render.yaml` (Docker web + worker).
 
 **v4 API highlights**
 

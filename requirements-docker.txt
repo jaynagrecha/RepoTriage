@@ -1,0 +1,3 @@
+-r requirements.txt
+yara-python==4.5.4
+ssdeep==3.4
