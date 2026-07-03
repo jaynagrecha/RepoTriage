@@ -6,6 +6,8 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
+from .cti_query_policy import count_exact_cti_anchors, threatfox_match_is_exact
+
 
 def _as_list(v):
     return v if isinstance(v, list) else []
@@ -24,27 +26,39 @@ def _uniq(seq):
 
 
 def _family_candidates(result: dict) -> list[dict]:
-    c=[]
-    fam=(result.get('family') or {}).get('name') or (result.get('vt') or {}).get('family',{}).get('name')
-    if fam and str(fam).lower()!='unknown': c.append({'family':fam,'source':'VirusTotal','confidence':(result.get('family') or {}).get('confidence',0)})
-    ti=result.get('threat_intel') or {}
-    mb=(ti.get('malwarebazaar') or {}).get('results') or []
+    c = []
+    anchors = count_exact_cti_anchors(result)
+    vt_fam = ((result.get('vt') or {}).get('family') or {}).get('name')
+    if vt_fam and str(vt_fam).lower() not in {'unknown', 'none', ''} and anchors.get('vt_malicious'):
+        c.append({'family': vt_fam, 'source': 'VirusTotal', 'confidence': (result.get('family') or {}).get('confidence', 0)})
+
+    ti = result.get('threat_intel') or {}
+    mb = (ti.get('malwarebazaar') or {}).get('results') or []
     for r in mb:
-        for key in ('family','signature'):
-            v=r.get(key)
-            if v and str(v).lower() not in {'unknown','none'}:
-                c.append({'family':v,'source':'MalwareBazaar','confidence':90 if r.get('found') else 40})
-    tf=(ti.get('threatfox') or {}).get('found') or []
+        if not r.get('found'):
+            continue
+        for key in ('family', 'signature'):
+            v = r.get(key)
+            if v and str(v).lower() not in {'unknown', 'none'}:
+                c.append({'family': v, 'source': 'MalwareBazaar', 'confidence': 90})
+
+    tf = (ti.get('threatfox') or {}).get('found') or []
     for row in tf:
+        queried = row.get('indicator') or ''
         for m in row.get('matches') or []:
-            v=m.get('malware') or m.get('malware_printable')
-            if v and str(v).lower() not in {'unknown','none'}:
-                c.append({'family':v,'source':'ThreatFox','confidence':m.get('confidence_level') or 60})
-    uh=(ti.get('urlhaus') or {}).get('results') or []
+            if not threatfox_match_is_exact(queried, str(m.get('ioc') or '')):
+                continue
+            v = m.get('malware') or m.get('malware_printable')
+            if v and str(v).lower() not in {'unknown', 'none'}:
+                c.append({'family': v, 'source': 'ThreatFox', 'confidence': m.get('confidence_level') or 60})
+
+    uh = (ti.get('urlhaus') or {}).get('results') or []
     for r in uh:
+        if not r.get('found'):
+            continue
         for v in _as_list(r.get('families')):
-            if v and str(v).lower() not in {'unknown','none'}:
-                c.append({'family':v,'source':'URLHaus','confidence':75 if r.get('found') else 30})
+            if v and str(v).lower() not in {'unknown', 'none'}:
+                c.append({'family': v, 'source': 'URLHaus', 'confidence': 75})
     return c
 
 
@@ -56,22 +70,43 @@ def build_cti_dashboard(result: dict) -> dict:
     fams=_family_candidates(result)
     fam_counter=Counter([x['family'] for x in fams])
     primary=fam_counter.most_common(1)[0][0] if fam_counter else 'Unknown'
+    anchors = count_exact_cti_anchors(result)
     sources=sorted(set([x.get('source') for x in fams if x.get('source')]))
     return {
         'primary_family': primary,
         'families': [{'name':k,'count':v,'sources': sorted(set(x['source'] for x in fams if x['family']==k))} for k,v in fam_counter.most_common()],
         'source_count': len(sources),
         'sources': sources,
-        'threatfox_matches': (ti.get('threatfox') or {}).get('summary',{}).get('match_count',0),
+        'threatfox_matches': anchors.get('exact_threatfox', 0),
         'malwarebazaar_matches': (ti.get('malwarebazaar') or {}).get('summary',{}).get('found',0),
-        'urlhaus_matches': (ti.get('urlhaus') or {}).get('summary',{}).get('found',0),
+        'urlhaus_matches': anchors.get('exact_urlhaus', 0),
         'feodo_matches': (ti.get('feodo') or {}).get('summary',{}).get('matches',0),
         'sslbl_matches': (ti.get('sslbl') or {}).get('summary',{}).get('matches',0),
         'ioc_count': sum(len(v) for k,v in iocs.items() if k != 'ioc_details' and isinstance(v,list)),
         'infrastructure_count': sum(len(v) for v in infra.values() if isinstance(v,list)),
         'mitre_count': (mitre.get('summary') or {}).get('count',0),
-        'risk': (result.get('attack_narrative') or {}).get('risk') or ('Critical' if (result.get('file_stats') or {}).get('malicious') else 'Unknown'),
+        'cti_anchors': anchors,
+        'attribution_policy': 'exact_ioc_or_hash_only',
+        'risk': _cti_risk_level(result, anchors),
     }
+
+
+def _cti_risk_level(result: dict, anchors: dict | None = None) -> str:
+    """Conservative dashboard risk — hash or exact IOC anchors only."""
+    anchors = anchors or count_exact_cti_anchors(result)
+    vt_m = int(anchors.get('vt_malicious') or 0)
+    mb = int(anchors.get('malwarebazaar_hash_hits') or 0)
+    exact_c2 = int(anchors.get('exact_probable_c2') or 0)
+    exact_ioc = int(anchors.get('exact_threatfox') or 0) + int(anchors.get('exact_urlhaus') or 0)
+    if vt_m >= 2 or mb >= 1 or (vt_m >= 1 and exact_c2 >= 1):
+        return 'Critical'
+    if vt_m >= 1 or exact_c2 >= 1 or (exact_ioc >= 2 and mb == 0):
+        return 'High'
+    if exact_ioc >= 1 or int((result.get('file_stats') or {}).get('suspicious') or 0) >= 1:
+        return 'Medium'
+    if int((result.get('file_stats') or {}).get('iocs') or 0) > 0:
+        return 'Low'
+    return 'Low'
 
 
 def build_infrastructure_graph(result: dict) -> dict:
@@ -225,12 +260,13 @@ def build_campaign_analysis(result: dict) -> dict:
     ti=result.get('threat_intel') or {}
 
     family=dash.get('primary_family') or 'Unknown'
+    anchors = count_exact_cti_anchors(result)
     score=0
     evidence=[]
 
-    if family and family != 'Unknown':
+    if family and family != 'Unknown' and (anchors.get('has_hash_anchor') or anchors.get('has_exact_ioc_anchor')):
         score += 20
-        evidence.append({'signal':'Malware family/signature observed','detail':family,'weight':20,'source':'VT/CTI fusion'})
+        evidence.append({'signal':'Malware family/signature observed (exact hash or IOC)','detail':family,'weight':20,'source':'CTI fusion'})
     if (result.get('file_stats') or {}).get('malicious',0) >= 2:
         score += 15
         evidence.append({'signal':'Multiple malicious files in same package','detail':str((result.get('file_stats') or {}).get('malicious')),'weight':15,'source':'VirusTotal'})
@@ -241,14 +277,14 @@ def build_campaign_analysis(result: dict) -> dict:
     if infra_count:
         score += min(20, infra_count*5)
         evidence.append({'signal':'Infrastructure evidence observed','detail':f'{infra_count} classified infrastructure item(s)','weight':min(20, infra_count*5),'source':'IOC/AbuseCH'})
-    tf_matches=(ti.get('threatfox') or {}).get('summary',{}).get('match_count',0)
-    uh_matches=(ti.get('urlhaus') or {}).get('summary',{}).get('found',0)
+    tf_matches=int(anchors.get('exact_threatfox') or 0)
+    uh_matches=int(anchors.get('exact_urlhaus') or 0)
     if tf_matches:
-        score += min(15, tf_matches*5)
-        evidence.append({'signal':'ThreatFox IOC matches','detail':str(tf_matches),'weight':min(15, tf_matches*5),'source':'ThreatFox'})
+        score += min(15, tf_matches * 8)
+        evidence.append({'signal':'Exact ThreatFox IOC match(es)','detail':str(tf_matches),'weight':min(15, tf_matches * 8),'source':'ThreatFox'})
     if uh_matches:
-        score += min(10, uh_matches*5)
-        evidence.append({'signal':'URLHaus malware URL matches','detail':str(uh_matches),'weight':min(10, uh_matches*5),'source':'URLHaus'})
+        score += min(10, uh_matches * 8)
+        evidence.append({'signal':'Exact URLHaus URL match(es)','detail':str(uh_matches),'weight':min(10, uh_matches * 8),'source':'URLHaus'})
     if mitre:
         score += min(10, len(mitre)*3)
         evidence.append({'signal':'ATT&CK behavioral clues','detail':f'{len(mitre)} mapped technique(s)','weight':min(10, len(mitre)*3),'source':'MITRE mapper'})
@@ -256,7 +292,7 @@ def build_campaign_analysis(result: dict) -> dict:
     score=min(100, score)
 
     # Do not invent named campaigns. Use conservative campaign label.
-    if family and family != 'Unknown':
+    if family and family != 'Unknown' and (anchors.get('has_hash_anchor') or anchors.get('has_exact_ioc_anchor')):
         if any(x in str(family).lower() for x in ('usb','runner','worm')):
             candidate='USB / removable-media malware distribution cluster'
         elif any(x in str(family).lower() for x in ('stealer','lumma','redline','rhadamanthys')):
@@ -299,7 +335,7 @@ def build_campaign_analysis(result: dict) -> dict:
         'delivery_mechanisms': delivery,
         'timeline': timeline,
         'summary': f'{candidate} with {score}% confidence ({_confidence_band(score)}). This is correlation, not definitive attribution.',
-        'disclaimer': 'Campaign correlation is evidence-based and conservative. Unknown is preferred over unsupported naming.',
+        'disclaimer': 'Campaign correlation requires exact hash or exact IOC match. Platform-wide CTI pivots are not used.',
     }
 
 

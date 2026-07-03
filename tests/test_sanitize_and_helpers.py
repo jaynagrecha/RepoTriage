@@ -114,18 +114,21 @@ class TestIocExtractor(unittest.TestCase):
 
 
 class TestNarrativeRisk(unittest.TestCase):
-    def test_abusech_matches_affect_risk(self):
+    def test_broad_abuse_counts_do_not_inflate_risk(self):
         result = {
             'files': [{'vt_verdict': 'clean'}],
             'file_stats': {'iocs': 0},
             'infrastructure': {},
             'threat_intel': {
+                'threatfox': {'found': []},
+                'malwarebazaar': {'summary': {'found': 0}, 'results': []},
+                'urlhaus': {'summary': {'found': 0}, 'results': []},
                 'abusech': {
                     'matches': {'threatfox': 2, 'malwarebazaar': 2, 'urlhaus': 0},
-                }
+                },
             },
         }
-        self.assertIn(_risk_level(result), {'Critical', 'High', 'Medium'})
+        self.assertEqual(_risk_level(result), 'Low')
 
 
 class TestVersion(unittest.TestCase):

@@ -21,6 +21,7 @@ from .modules.file_type import guess_file_type
 from .modules.vt_lookup import lookup_file_hash, VTLookupError
 from .modules.extractor import extract_recursive, is_archive
 from .modules.ioc_extractor import extract_iocs_from_file, merge_iocs, classify_infrastructure
+from .modules.cti_query_policy import threatfox_match_is_exact
 from .modules.threatfox import enrich_iocs
 from .modules.malwarebazaar import enrich_files as enrich_malwarebazaar
 from .modules.urlhaus import enrich_iocs as enrich_urlhaus
@@ -35,8 +36,8 @@ from .platform.worker_config import inline_worker_enabled
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.3'
-PLATFORM_VERSION = '4.0.0-alpha.3'
+APP_VERSION = '4.0.0-alpha.4'
+PLATFORM_VERSION = '4.0.0-alpha.4'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -241,7 +242,10 @@ def integrate_threatfox_infrastructure(infra: dict, threatfox: dict) -> dict:
                     seen.add((bucket, str(row.get('indicator')).lower()))
 
     for item in (threatfox or {}).get('found', []) or []:
+        queried = item.get('indicator') or ''
         for m in item.get('matches', []) or []:
+            if not threatfox_match_is_exact(queried, str(m.get('ioc') or '')):
+                continue
             role = m.get('infrastructure_role') or 'ThreatFox Match'
             bucket = role_to_bucket.get(role, 'known_bad_infrastructure')
             indicator = m.get('ioc') or item.get('indicator')

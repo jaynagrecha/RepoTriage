@@ -8,6 +8,11 @@ from typing import Any
 
 import httpx
 
+from .cti_query_policy import (
+    filter_threatfox_matches,
+    should_query_threatfox,
+)
+
 THREATFOX_API = "https://threatfox-api.abuse.ch/api/v1/"
 
 
@@ -120,6 +125,8 @@ def normalize_result(indicator: str, payload: dict, cache_hit: bool = False) -> 
             "threatfox_link": _tf_link(str(row.get("id")) if row.get("id") else None),
         })
 
+    cleaned = filter_threatfox_matches(indicator, cleaned)
+
     return {
         "indicator": indicator,
         "indicator_type": _classify_indicator(indicator),
@@ -138,15 +145,31 @@ async def lookup_ioc(indicator: str, base_dir: Path) -> dict:
     if not _enabled():
         return {"indicator": indicator, "status": "disabled", "matches": [], "match_count": 0}
 
+    allowed, skip_reason = should_query_threatfox(indicator)
+    if not allowed:
+        return {
+            "indicator": indicator,
+            "indicator_type": _classify_indicator(indicator),
+            "status": "skipped",
+            "skip_reason": skip_reason,
+            "matches": [],
+            "match_count": 0,
+            "exact_match_only": True,
+        }
+
     cache = _load_cache(base_dir)
-    key = indicator.lower()
+    key = f"exact:{indicator.lower()}"
     if key in cache:
         return normalize_result(indicator, cache[key], cache_hit=True)
 
     timeout = float(os.getenv("THREATFOX_TIMEOUT", "18"))
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(THREATFOX_API, headers=_headers(), json={"query": "search_ioc", "search_term": indicator})
+            r = await client.post(
+                THREATFOX_API,
+                headers=_headers(),
+                json={"query": "search_ioc", "search_term": indicator, "exact_match": True},
+            )
             r.raise_for_status()
             payload = r.json()
     except Exception as e:
@@ -154,7 +177,9 @@ async def lookup_ioc(indicator: str, base_dir: Path) -> dict:
 
     cache[key] = payload
     _save_cache(base_dir, cache)
-    return normalize_result(indicator, payload, cache_hit=False)
+    result = normalize_result(indicator, payload, cache_hit=False)
+    result["exact_match_only"] = True
+    return result
 
 
 def _build_relationships(found: list[dict]) -> dict:
@@ -281,8 +306,10 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
     return {
         "enabled": True,
         "status": "completed",
+        "exact_match_only": True,
         "lookups": lookups,
         "found": found,
         "summary": summary,
         "relationships": relationships,
+        "policy_note": "ThreatFox uses exact_match=true; platform hosts and wildcard pivots are skipped.",
     }

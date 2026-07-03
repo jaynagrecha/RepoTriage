@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .cti_query_policy import should_query_urlhaus
+
 URLHAUS_URL_API = "https://urlhaus-api.abuse.ch/v1/url/"
 URLHAUS_HOST_API = "https://urlhaus-api.abuse.ch/v1/host/"
 
@@ -191,13 +193,24 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
     candidates = []
     for u in iocs.get("urls", []) or []:
         if u not in candidates:
-            candidates.append(("url", u))
-    for d in iocs.get("domains", []) or []:
-        if d not in [x[1] for x in candidates]:
-            candidates.append(("host", d))
-    for typ, value in candidates[:limit]:
-        if typ == "url":
-            results.append(await lookup_url(value, base_dir))
-        else:
-            results.append(await lookup_host(value, base_dir))
-    return {"enabled": True, "status": "completed", "results": results, "summary": _summary(results)}
+            candidates.append(u)
+    for typ, value in [("url", u) for u in candidates[:limit]]:
+        allowed, skip_reason = should_query_urlhaus(value)
+        if not allowed:
+            results.append({
+                "indicator": value,
+                "indicator_type": "url",
+                "status": "skipped",
+                "skip_reason": skip_reason,
+                "found": False,
+            })
+            continue
+        results.append(await lookup_url(value, base_dir))
+    return {
+        "enabled": True,
+        "status": "completed",
+        "exact_url_only": True,
+        "results": results,
+        "summary": _summary(results),
+        "policy_note": "URLHaus uses exact URL lookup only; host-wide domain pivots are disabled.",
+    }

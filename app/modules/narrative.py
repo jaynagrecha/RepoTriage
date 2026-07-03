@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 
+from .cti_query_policy import count_exact_cti_anchors
+
 
 def _uniq(items):
     out=[]; seen=set()
@@ -118,17 +120,18 @@ def _mitre_highlights(result: dict, limit=8):
 
 
 def _risk_level(result: dict) -> str:
-    malicious=len(_malicious_files(result))
-    suspicious=len(_suspicious_files(result))
-    infra=_infra_counts(result)
-    cti=(result.get('threat_intel') or {}).get('abusech') or {}
-    match_counts = cti.get('matches') or {}
-    abuse_matches = sum(int(match_counts.get(k) or 0) for k in ('threatfox', 'malwarebazaar', 'urlhaus'))
-    if malicious >= 2 or infra['probable_c2'] or abuse_matches >= 3:
+    malicious = len(_malicious_files(result))
+    suspicious = len(_suspicious_files(result))
+    anchors = count_exact_cti_anchors(result)
+    exact_c2 = int(anchors.get('exact_probable_c2') or 0)
+    mb = int(anchors.get('malwarebazaar_hash_hits') or 0)
+    exact_ioc = int(anchors.get('exact_threatfox') or 0) + int(anchors.get('exact_urlhaus') or 0)
+
+    if malicious >= 2 or mb >= 1 or (malicious >= 1 and exact_c2 >= 1):
         return 'Critical'
-    if malicious == 1 or suspicious or infra['payload_delivery'] or infra['malware_downloads']:
+    if malicious == 1 or suspicious or exact_c2 >= 1 or exact_ioc >= 2:
         return 'High'
-    if sum(infra.values()) or (result.get('file_stats') or {}).get('iocs'):
+    if exact_ioc >= 1 or (result.get('file_stats') or {}).get('iocs'):
         return 'Medium'
     return 'Low'
 
