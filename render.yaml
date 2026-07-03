@@ -20,6 +20,14 @@ services:
         value: "true"
       - key: TRUST_PROXY
         value: "true"
+      - key: SEMANTIC_LLM_ENABLED
+        value: "true"
+      - key: SEMANTIC_LLM_PROVIDER
+        value: openai
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_API_KEY
+        sync: false
     disk:
       name: repotriage-data
       mountPath: /var/data
@@ -35,6 +43,14 @@ services:
         value: /var/data
       - key: WORKER_POLL_SECONDS
         value: "2"
+      - key: SEMANTIC_LLM_ENABLED
+        value: "true"
+      - key: SEMANTIC_LLM_PROVIDER
+        value: openai
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_API_KEY
+        sync: false
     disk:
       name: repotriage-data
       mountPath: /var/data

@@ -32,12 +32,13 @@ from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph,
 from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 from .platform import PlatformDB, TaskQueue
 from .platform.worker_config import inline_worker_enabled
+from .modules.deep_analysis.llm_semantic import llm_configured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.10'
-PLATFORM_VERSION = '4.0.0-alpha.10'
+APP_VERSION = '4.0.0-alpha.11'
+PLATFORM_VERSION = '4.0.0-alpha.11'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -398,6 +399,9 @@ async def health():
         'deep_worker_active': getattr(app.state, 'deep_worker_active', inline_worker_enabled()),
         'r2_available': bool(shutil.which(os.getenv('R2_BINARY', 'r2') or 'r2')),
         'burst_analysis_limit_per_minute': USAGE_LIMITER.burst_limit,
+        'semantic_llm_configured': llm_configured(),
+        'semantic_llm_provider': os.getenv('SEMANTIC_LLM_PROVIDER', 'openai'),
+        'semantic_llm_model': os.getenv('OPENAI_MODEL', os.getenv('ANTHROPIC_MODEL', 'gpt-4o-mini')),
     }
 
 

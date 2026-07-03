@@ -16,7 +16,10 @@ from .modules.similarity_engine import compute_ssdeep, similarity_report
 from .modules.ioc_reputation import enrich_indicators
 from .modules.cert_intel import enrich_domains
 from .modules.family_parser import parse_family_indicators
-from .modules.deep_analysis import run_deep_exclusive, build_deep_narrative, build_attack_chain, interpret_behavior, analyze_semantic
+from .modules.deep_analysis import (
+    run_deep_exclusive, build_deep_narrative, build_attack_chain, interpret_behavior, analyze_semantic,
+)
+from .modules.deep_analysis.llm_semantic import enrich_semantic_with_llm
 from .modules.deep_analysis.intel import enrich_file_intel
 from .modules.detection_policy import combine_deep_verdict
 from .modules.static_analysis.store import load_record
@@ -24,7 +27,7 @@ from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.10'
+PLATFORM_VERSION = '4.0.0-alpha.11'
 LOG = logging.getLogger('repotriage.worker')
 
 
@@ -97,6 +100,11 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
         family_hints=bundle.get('family_hints'),
         script_deep=(bundle.get('deep_exclusive') or {}).get('script'),
         pe_deep=(bundle.get('deep_exclusive') or {}).get('pe'),
+    )
+    bundle['semantic'] = await enrich_semantic_with_llm(
+        bundle['semantic'],
+        filename=filename,
+        sample_text=sample_text,
     )
     db.save_artifact(job_id, sha256, 'semantic', bundle['semantic'], PLATFORM_VERSION)
 

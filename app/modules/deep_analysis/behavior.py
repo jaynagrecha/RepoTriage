@@ -463,6 +463,10 @@ def _merge_behavior_with_semantic(
         profile_behavior['interpretation_source'] = 'heuristic_profile'
         return profile_behavior
 
+    source = 'semantic_capability'
+    if (semantic.get('llm') or {}).get('status') == 'ok':
+        source = 'semantic_capability+llm'
+
     merged = dict(profile_behavior)
     merged.update({
         'behavior_class': semantic.get('behavior_class') or profile_id,
@@ -472,7 +476,7 @@ def _merge_behavior_with_semantic(
         'threat_category': semantic.get('threat_category') or profile_behavior.get('threat_category'),
         'summary': semantic.get('summary') or profile_behavior.get('summary'),
         'recommended_action': semantic.get('recommended_action') or profile_behavior.get('recommended_action'),
-        'interpretation_source': 'semantic_capability',
+        'interpretation_source': source,
         'semantic': semantic,
     })
     sem_bullets = list(semantic.get('what_it_does') or [])
