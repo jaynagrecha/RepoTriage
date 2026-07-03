@@ -27,7 +27,8 @@ def _compute_delta(static: dict[str, Any] | None, deep: dict[str, Any]) -> dict[
     for url in sorted(deep_urls - static_urls)[:10]:
         exclusive.append({'type': 'url', 'value': url, 'source': 'deep_pe_strings' if pe else 'deep_script_chain'})
     for domain in sorted(deep_domains - static_domains)[:10]:
-        exclusive.append({'type': 'domain', 'value': domain, 'source': 'deep_script_chain'})
+        if '.' in domain and not domain.endswith('.post') and domain.count('.') >= 1:
+            exclusive.append({'type': 'domain', 'value': domain, 'source': 'deep_script_chain'})
 
     for hint in pe.get('packer_hints') or []:
         exclusive.append({'type': 'packer', 'value': hint, 'source': 'pe_deep'})

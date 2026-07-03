@@ -16,7 +16,7 @@ from .modules.similarity_engine import compute_ssdeep, similarity_report
 from .modules.ioc_reputation import enrich_indicators
 from .modules.cert_intel import enrich_domains
 from .modules.family_parser import parse_family_indicators
-from .modules.deep_analysis import run_deep_exclusive, build_deep_narrative, build_attack_chain
+from .modules.deep_analysis import run_deep_exclusive, build_deep_narrative, build_attack_chain, interpret_behavior
 from .modules.deep_analysis.intel import enrich_file_intel
 from .modules.detection_policy import combine_deep_verdict
 from .modules.static_analysis.store import load_record
@@ -24,7 +24,7 @@ from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.5'
+PLATFORM_VERSION = '4.0.0-alpha.6'
 LOG = logging.getLogger('repotriage.worker')
 
 
@@ -98,6 +98,8 @@ async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
     )
     bundle['combined_verdict'] = verdict
     bundle['verdict_evidence'] = evidence
+    sample_text = path.read_bytes()[:2_000_000].decode('utf-8', errors='ignore')
+    bundle['behavior'] = interpret_behavior(bundle, static=static, sample_text=sample_text)
     bundle['attack_chain'] = build_attack_chain(bundle)
     bundle['deep_narrative'] = build_deep_narrative(bundle)
     bundle['confidence_explanation'] = _confidence_explanation(bundle, static, evidence)

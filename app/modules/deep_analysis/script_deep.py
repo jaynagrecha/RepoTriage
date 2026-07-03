@@ -3,7 +3,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+
+AUTH_SMS_PATH = re.compile(
+    r'(?:register|signup|sign_up|sign-up|auth/sms|/sms|send.?code|otp|verify|verification|'
+    r'password.?reset|pass-recovery|keycode|getcode|confirm)',
+    re.I,
+)
 
 PHASE_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
     ('initial_access', 'User execution / script launch', re.compile(r'(?:start\s|wscript|cscript|mshta|powershell|cmd\.exe)', re.I)),
@@ -16,17 +23,92 @@ PHASE_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
 ]
 
 
+def _extract_http_calls(text: str) -> list[dict[str, str]]:
+    calls: list[dict[str, str]] = []
+    patterns = [
+        re.compile(r'requests\.(get|post|put|patch|delete)\(\s*[\'"](https?://[^\'"]+)[\'"]', re.I),
+        re.compile(r'urllib\.request\.urlopen\(\s*[\'"](https?://[^\'"]+)[\'"]', re.I),
+        re.compile(r'(?:curl|wget)\s+(?:[^\n\'"]+)?[\'"](https?://[^\'"]+)[\'"]', re.I),
+        re.compile(r'(?:Invoke-WebRequest|Invoke-RestMethod)\s+[^\n\'"]*[\'"](https?://[^\'"]+)[\'"]', re.I),
+    ]
+    for pat in patterns:
+        for match in pat.finditer(text):
+            groups = match.groups()
+            if len(groups) >= 2:
+                method, url = groups[0].upper(), groups[1]
+            else:
+                method, url = 'GET', groups[0]
+            purpose = 'auth/sms/otp' if AUTH_SMS_PATH.search(url) else 'http'
+            calls.append({'method': method, 'url': url, 'purpose': purpose})
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for c in calls:
+        k = c['url'].lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(c)
+        if len(out) >= 40:
+            break
+    return out
+
+
 def _reconstruct_commands(text: str) -> list[str]:
     commands: list[str] = []
     for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith('::') or line.startswith('#'):
+        if not line or line.startswith('::'):
             continue
-        if any(x in line.lower() for x in ('powershell', 'cmd', 'wscript', 'curl', 'http', 'reg ', 'schtasks', 'start ', 'rundll32', 'mshta')):
+        if line.startswith('#') and 'http' not in line.lower():
+            continue
+        lower = line.lower()
+        if any(x in lower for x in (
+            'powershell', 'cmd', 'wscript', 'curl', 'http', 'reg ', 'schtasks', 'start ',
+            'rundll32', 'mshta', 'requests.', 'urllib', 'invoke-webrequest', 'download',
+        )):
             commands.append(line[:300])
-        if len(commands) >= 15:
+        if len(commands) >= 20:
             break
     return commands
+
+
+def _domains_from_urls(urls: list[str]) -> list[str]:
+    domains: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        try:
+            host = (urlparse(url).hostname or '').lower()
+        except Exception:
+            continue
+        if host and host not in seen:
+            seen.add(host)
+            domains.append(host)
+    return domains[:20]
+
+
+def _build_execution_chain(http_calls: list[dict[str, str]], commands: list[str]) -> list[dict[str, str]]:
+    chain: list[dict[str, str]] = []
+    step = 1
+    for call in http_calls[:15]:
+        label = f"{call['method']} {call['url'][:100]}"
+        if call.get('purpose') == 'auth/sms/otp':
+            label = f"Trigger SMS/OTP via {call['method']} → {call['url'][:90]}"
+        chain.append({'step': step, 'type': call.get('purpose') or 'http', 'command': label})
+        step += 1
+    for cmd in commands:
+        if step > 20:
+            break
+        lower = cmd.lower()
+        step_type = 'command'
+        if 'http' in lower or 'download' in lower:
+            step_type = 'download'
+        elif 'reg ' in lower or 'schtasks' in lower:
+            step_type = 'persistence'
+        elif 'powershell' in lower or 'iex' in lower or 'eval' in lower:
+            step_type = 'execute'
+        chain.append({'step': step, 'type': step_type, 'command': cmd[:300]})
+        step += 1
+    return chain
 
 
 def analyze_script_deep(path: Path, *, filename: str | None = None) -> dict[str, Any]:
@@ -44,33 +126,37 @@ def analyze_script_deep(path: Path, *, filename: str | None = None) -> dict[str,
         if marker.lower() in text.lower():
             obfuscation_score += 1
 
-    urls = list(dict.fromkeys(re.findall(r'https?://[^\s\'\"<>\\]{6,200}', text, re.I)))[:20]
-    domains = list(dict.fromkeys(re.findall(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}', text, re.I)))[:20]
-    domains = [d for d in domains if not d.endswith(('.dll', '.exe', '.bat', '.cmd'))][:15]
-
+    http_calls = _extract_http_calls(text)
+    url_from_calls = [c['url'] for c in http_calls]
+    urls = list(dict.fromkeys(url_from_calls + re.findall(r'https?://[^\s\'\"<>\\]{6,200}', text, re.I)))[:40]
+    domains = _domains_from_urls(urls)
     commands = _reconstruct_commands(text)
-    execution_chain: list[dict[str, str]] = []
-    for idx, cmd in enumerate(commands, 1):
-        step_type = 'command'
-        lower = cmd.lower()
-        if 'http' in lower or 'download' in lower:
-            step_type = 'download'
-        elif 'reg ' in lower or 'schtasks' in lower:
-            step_type = 'persistence'
-        elif 'powershell' in lower or 'iex' in lower or 'eval' in lower:
-            step_type = 'execute'
-        execution_chain.append({'step': idx, 'type': step_type, 'command': cmd})
+    execution_chain = _build_execution_chain(http_calls, commands)
 
-    language = 'batch/cmd' if ext in {'.cmd', '.bat'} else ('powershell' if ext == '.ps1' else ('vbscript' if ext in {'.vbs', '.vbe'} else 'script'))
+    if ext == '.py':
+        language = 'python'
+    elif ext in {'.cmd', '.bat'}:
+        language = 'batch/cmd'
+    elif ext == '.ps1':
+        language = 'powershell'
+    elif ext in {'.vbs', '.vbe'}:
+        language = 'vbscript'
+    else:
+        language = 'script'
+
+    auth_url_count = sum(1 for c in http_calls if c.get('purpose') == 'auth/sms/otp')
 
     return {
         'language': language,
         'kill_chain_phases': phases,
         'execution_chain': execution_chain,
+        'http_calls': http_calls,
         'commands_reconstructed': commands,
         'c2_urls': urls,
         'c2_domains': domains,
         'obfuscation_score': obfuscation_score,
         'obfuscation_level': 'high' if obfuscation_score >= 4 else ('medium' if obfuscation_score >= 2 else 'low'),
         'likely_stages': len(phases),
+        'auth_sms_url_count': auth_url_count,
+        'unique_service_count': len(domains),
     }
