@@ -23,6 +23,9 @@ class TaskQueue:
     def claim(self) -> dict[str, Any] | None:
         return self.db.claim_next_task()
 
+    def claim_task(self, task_id: str) -> dict[str, Any] | None:
+        return self.db.claim_task(task_id)
+
     def complete(self, task_id: str, result: dict | None = None) -> None:
         self.db.complete_task(task_id, result)
 

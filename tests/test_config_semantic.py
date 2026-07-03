@@ -81,5 +81,14 @@ if __name__ == "__main__":
         self.assertNotIn('detected.', summary.split('primary behavior')[-1])
 
 
+class TestMarshalStubSemantic(unittest.TestCase):
+    def test_marshal_exec_stub_detected(self):
+        sample = "import marshal\nexec(marshal.loads(b'\\x00\\x00\\x00\\x00\\xe3\\x00\\x00\\x00'))\n"
+        result = analyze_semantic(None, filename='HxWhatsApp.py', sample_text=sample)
+        self.assertEqual(result.get('purpose_rule_id'), 'python_marshal_stub')
+        self.assertIn('marshal', result['summary'].lower())
+        self.assertIn('exec', result['summary'].lower())
+
+
 if __name__ == '__main__':
     unittest.main()

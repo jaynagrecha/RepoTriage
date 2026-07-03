@@ -52,14 +52,17 @@ def extract_strings(data: bytes, min_len: int = 5, limit: int = 500) -> list[str
     return out
 
 
+from .limits import read_bytes_capped
+
+
 def analyze_universal(path: Path) -> dict[str, Any]:
-    data = path.read_bytes()
-    size = len(data)
+    data, size, truncated = read_bytes_capped(path)
     strings = extract_strings(data)
     suspicious = [s for s in strings if SUSPICIOUS_STRINGS.search(s)][:50]
     iocs = extract_iocs_from_file(str(path))
     return {
         'size_bytes': size,
+        'truncated_for_analysis': truncated,
         'entropy': shannon_entropy(data[:65536]),
         'magic_hex': data[:16].hex(),
         'strings_total': len(strings),
