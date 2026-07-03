@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ from .modules.integrations import send_webhook
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PLATFORM_VERSION = '4.0.0-alpha.1'
+LOG = logging.getLogger('repotriage.worker')
 
 
 async def handle_deep_analysis(db: PlatformDB, task: dict) -> dict:
@@ -121,6 +123,7 @@ async def process_task(db: PlatformDB, task: dict) -> None:
     queue = TaskQueue(db)
     task_id = task['task_id']
     task_type = task['task_type']
+    LOG.info('processing task %s type=%s job=%s sha256=%s', task_id, task_type, task.get('job_id'), task.get('sha256'))
     handler = HANDLERS.get(task_type)
     if not handler:
         queue.fail(task_id, f'unknown task type: {task_type}')
@@ -128,13 +131,16 @@ async def process_task(db: PlatformDB, task: dict) -> None:
     try:
         result = await handler(db, task)
         queue.complete(task_id, result)
+        LOG.info('completed task %s type=%s', task_id, task_type)
     except Exception as exc:
+        LOG.exception('failed task %s: %s', task_id, exc)
         queue.fail(task_id, str(exc))
 
 
 async def worker_loop(poll_seconds: float = 2.0) -> None:
     db = PlatformDB(BASE_DIR)
     queue = TaskQueue(db)
+    LOG.info('deep worker loop started poll=%ss db=%s', poll_seconds, db.db_path)
     while True:
         task = queue.claim()
         if not task:

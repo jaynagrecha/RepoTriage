@@ -30,6 +30,7 @@ from .modules.narrative import generate_attack_narrative
 from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
 from .modules.rate_limit import UsageLimiter, RateLimitExceeded
 from .platform import PlatformDB, TaskQueue
+from .platform.worker_config import inline_worker_enabled
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
@@ -53,11 +54,14 @@ async def _startup_platform():
     from .v4_routes import router as v4_router
 
     app.include_router(v4_router)
-    if _env_truthy('WORKER_INLINE', False):
+    if inline_worker_enabled():
         from .worker_main import worker_loop
 
         poll = float(os.getenv('WORKER_POLL_SECONDS', '2'))
+        app.state.deep_worker_active = True
         asyncio.create_task(worker_loop(poll))
+    else:
+        app.state.deep_worker_active = False
 
 
 def _enqueue_deep_analysis_for_job(job_id: str) -> None:
@@ -386,7 +390,8 @@ async def health():
         'platform_version': PLATFORM_VERSION,
         'auto_deep_analysis': _env_truthy('AUTO_DEEP_ANALYSIS', False),
         'worker_mode': _env_truthy('WORKER_ENABLED', True),
-        'worker_inline': _env_truthy('WORKER_INLINE', False),
+        'worker_inline': inline_worker_enabled(),
+        'deep_worker_active': getattr(app.state, 'deep_worker_active', inline_worker_enabled()),
         'r2_available': bool(shutil.which(os.getenv('R2_BINARY', 'r2') or 'r2')),
         'burst_analysis_limit_per_minute': USAGE_LIMITER.burst_limit,
     }

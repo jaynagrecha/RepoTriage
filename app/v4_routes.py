@@ -12,18 +12,12 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .platform import PlatformDB, TaskQueue
+from .platform.worker_config import inline_worker_enabled
 from .modules.blocklist_export import export_blocklist, job_diff
 from .modules.integrations import ApiKeyManager, send_webhook
 from .worker_main import PLATFORM_VERSION, process_task
 
 router = APIRouter(prefix='/api/v4', tags=['v4'])
-
-
-def _env_truthy(name: str, default: bool = False) -> bool:
-    val = os.getenv(name)
-    if val is None:
-        return default
-    return str(val).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 async def _process_inline(db: PlatformDB, task_id: str) -> None:
@@ -58,6 +52,8 @@ async def v4_health(request: Request):
         'ok': True,
         'platform_version': PLATFORM_VERSION,
         'worker_mode': True,
+        'worker_inline': inline_worker_enabled(),
+        'deep_worker_active': getattr(request.app.state, 'deep_worker_active', inline_worker_enabled()),
         'db_path': str(_db(request).db_path),
     }
 
@@ -90,9 +86,14 @@ async def enqueue_deep_analysis(job_id: str, sha256: str, request: Request, body
             'vt_verdict': entry.get('vt_verdict'),
         },
     )
-    if _env_truthy('WORKER_INLINE', False):
+    if inline_worker_enabled():
         asyncio.create_task(_process_inline(db, task_id))
-    return {'status': 'queued', 'task_id': task_id, 'poll_url': f'/api/v4/tasks/{task_id}', 'inline': _env_truthy('WORKER_INLINE', False)}
+    return {
+        'status': 'queued',
+        'task_id': task_id,
+        'poll_url': f'/api/v4/tasks/{task_id}',
+        'inline': inline_worker_enabled(),
+    }
 
 
 @router.get('/tasks/{task_id}')

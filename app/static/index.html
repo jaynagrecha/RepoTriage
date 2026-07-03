@@ -305,7 +305,7 @@ async function runJobDiff(){
  try{const r=await fetch(`/api/v4/jobs/diff?job_a=${encodeURIComponent(a)}&job_b=${encodeURIComponent(b)}`); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); el.innerHTML=`<pre>${esc(JSON.stringify(j,null,2))}</pre>`;}catch(e){if(el)el.innerHTML=`<div class="err">${esc(e.message)}</div>`}
 }
 function staticAnalysisHtml(){
- return `<div class="info-box"><b>Static &amp; Deep Analysis</b><div class="small"><b>Analyse</b> = fast static RE. <b>Deep</b> = worker pipeline (YARA, sandbox-lite, macro extract, ssdeep similarity, live URL VT lookup) — requires Render worker service.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse or Deep.</div>`;
+ return `<div class="info-box"><b>Static &amp; Deep Analysis</b><div class="small"><b>Analyse</b> = fast static RE. <b>Deep</b> = worker pipeline (YARA, sandbox-lite, macro extract, ssdeep similarity, live URL VT lookup). On a single Render web service, the worker runs inline automatically.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse or Deep.</div>`;
 }
 async function runStaticAnalysis(sha256, btn, force=false){
  if(!currentJobId)return alert('Run a completed analysis job first');

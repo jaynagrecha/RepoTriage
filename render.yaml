@@ -12,6 +12,8 @@ services:
         value: "false"
       - key: WORKER_INLINE
         value: "true"
+      - key: DEDICATED_WORKER
+        value: "false"
       - key: AUTO_DEEP_ANALYSIS
         value: "false"
       - key: STATIC_ANALYSIS_ENABLED
