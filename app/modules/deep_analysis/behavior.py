@@ -5,21 +5,45 @@ from typing import Any
 from urllib.parse import urlparse
 
 
-# URL path hints for dynamic behavior classification (not file-specific).
-AUTH_SMS_PATH = re.compile(
-    r'(?:register|signup|sign_up|sign-up|auth/sms|/sms|send.?code|otp|verify|verification|'
-    r'password.?reset|pass-recovery|keycode|getcode|confirm)',
+# Strict API-style paths only — avoids doc URLs like ".../signature-verification-failed".
+STRICT_AUTH_SMS_API = re.compile(
+    r'(?:'
+    r'auth/sms|/sms/send|/v\d+/auth/sms|send.?code|/otp\b|password.?reset|pass-recovery|'
+    r'keycode\.html|profiles/register|sign_up\b|signup\b|/register\b'
+    r')',
     re.I,
 )
-PHONE_FIELD = re.compile(r'(?:phone|phoneNumber|phone_number|mobile|msisdn|_phone\d*)', re.I)
+
+# Substrings that indicate documentation / pentest reference, not live abuse APIs.
+DOC_URL_MARKERS = re.compile(
+    r'(?:hacktricks|gtfobins|privilege-escalation|privesc|checklist|forensics|'
+    r'securitytracker|stackexchange|stackoverflow|togaware|github\.com/.+/tree/)',
+    re.I,
+)
+
+DOC_HOST_FRAGMENTS = (
+    'hacktricks', 'gtfobins', 'stackoverflow', 'stackexchange', 'securitytracker',
+    'togaware', 'github.com', 'wikimedia', 'wikipedia', 'mozilla.org',
+)
+
+PRIVESC_MARKERS = re.compile(
+    r'(?:'
+    r'linpeas|peass-ng|peass\b|linux.?privilege.?escalation|privilege.?escalation|privesc|'
+    r'gtfobins|/suid\b|suid\.|sudoers|/etc/shadow|/etc/passwd|capabilities|capsh|'
+    r'cron\.d|ld\.so|ld_preload|writable\.path|kernel.?exploit'
+    r')',
+    re.I,
+)
+
+PHONE_FIELD = re.compile(r'(?:\bphone_number\b|\bphoneNumber\b|\bphone_number\b|_phone\d*\s*=|\bmsisdn\b)', re.I)
 DOWNLOAD_EXEC = re.compile(r'(?:downloadstring|downloadfile|invoke-webrequest|curl\s|wget\s|iex\b|eval\s*\()', re.I)
 WEBHOOK_EXFIL = re.compile(r'discord(?:app)?\.com/api/webhooks|api\.telegram\.org', re.I)
 PERSISTENCE = re.compile(r'CurrentVersion\\Run|schtasks|reg\s+add', re.I)
 THREADING = re.compile(r'\b(?:threading|ThreadPool|multiprocessing|Process\s*\(|asyncio\.gather)\b', re.I)
-CRYPTO_WALLET = re.compile(r'bc1[a-z0-9]{20,}|0x[a-fA-F0-9]{40}', re.I)
 
 BEHAVIOR_LABELS = {
     'sms_otp_abuse': 'SMS / OTP abuse tool',
+    'linux_privesc_enum': 'Linux privilege-escalation enumerator',
     'script_dropper': 'Script-based dropper / downloader',
     'credential_stealer': 'Credential / data theft',
     'persistence_tool': 'Persistence mechanism',
@@ -32,11 +56,48 @@ BEHAVIOR_LABELS = {
 }
 
 
+def _norm_url(url: str) -> str:
+    return (url or '').strip().lower()
+
+
+def _url_host_path(url: str) -> tuple[str, str]:
+    try:
+        p = urlparse(url)
+        return (p.hostname or '').lower(), (p.path or '').lower()
+    except Exception:
+        return '', ''
+
+
+def is_documentation_url(url: str) -> bool:
+    u = _norm_url(url)
+    host, path = _url_host_path(url)
+    if DOC_URL_MARKERS.search(u):
+        return True
+    if any(frag in host for frag in DOC_HOST_FRAGMENTS):
+        return True
+    if any(x in path for x in ('/wiki/', '/tree/', 'checklist', 'privilege-escalation', 'forensics')):
+        return True
+    return False
+
+
+def is_auth_sms_api_url(url: str) -> bool:
+    if is_documentation_url(url):
+        return False
+    u = _norm_url(url)
+    if re.search(r'(?:signature-verification|verification-failed|/email|/docs/)', u):
+        return False
+    return bool(STRICT_AUTH_SMS_API.search(u))
+
+
 def _service_name_from_url(url: str) -> str:
     try:
         host = (urlparse(url).hostname or '').lower()
         if not host:
             return url[:40]
+        if 'hacktricks' in host:
+            return 'HackTricks (documentation)'
+        if 'gtfobins' in host:
+            return 'GTFOBins (documentation)'
         parts = host.split('.')
         if len(parts) >= 2:
             return parts[-2].replace('-', ' ').title()
@@ -59,30 +120,61 @@ def _unique_preserve(items: list[str], limit: int = 12) -> list[str]:
     return out
 
 
+def _privesc_signal_strength(text: str, urls: list[str]) -> tuple[int, list[str]]:
+    evidence: list[str] = []
+    score = 0
+    markers = set(m.lower() for m in PRIVESC_MARKERS.findall(text))
+    if markers:
+        score += min(20, len(markers) * 3)
+        evidence.append(f"References privilege-escalation enumeration patterns ({', '.join(sorted(markers)[:6])})")
+    if re.search(r'\blinpeas\b', text, re.I):
+        score += 15
+        evidence.append('Identifies as or implements LinPEAS-style local enumeration')
+    doc_urls = [u for u in urls if is_documentation_url(u)]
+    privesc_docs = [u for u in doc_urls if re.search(r'privilege-escalation|gtfobins|linux-unix', u, re.I)]
+    if privesc_docs:
+        score += min(15, len(privesc_docs) * 2)
+        evidence.append(f"Embeds {len(privesc_docs)} pentest reference URL(s) (HackTricks/GTFOBins-style guides)")
+    if re.search(r'\bsidG\d|\bsudoVB|\bsudocaps|INTERESTING.*FILES|SUID', text, re.I):
+        score += 8
+        evidence.append('Contains SUID/sudo/capability enumeration logic typical of post-exploitation scripts')
+    return score, evidence
+
+
 def _score_profiles(signals: dict[str, Any]) -> list[tuple[str, int, list[str]]]:
-    """Return ranked (profile_id, score, evidence_lines)."""
     profiles: list[tuple[str, int, list[str]]] = []
 
-    auth_urls = signals.get('auth_sms_urls') or []
+    auth_urls = signals.get('auth_sms_api_urls') or []
+    doc_urls = signals.get('documentation_urls') or []
     unique_hosts = signals.get('unique_http_hosts') or []
     http_count = int(signals.get('http_call_count') or 0)
     has_phone = bool(signals.get('has_phone_fields'))
     has_threading = bool(signals.get('has_threading'))
+    privesc_score = int(signals.get('privesc_score') or 0)
+    privesc_evidence = list(signals.get('privesc_evidence') or [])
 
-    if len(auth_urls) >= 2 or (http_count >= 4 and len(auth_urls) >= 1):
-        score = len(auth_urls) * 3 + (5 if has_phone else 0) + (4 if has_threading else 0) + min(http_count, 10)
-        ev = [
-            f"{len(auth_urls)} URL(s) target registration, SMS, OTP, or password-recovery endpoints",
-        ]
+    if privesc_score >= 10:
+        profiles.append(('linux_privesc_enum', privesc_score, privesc_evidence or [
+            'Local enumeration / privilege-escalation hunting behavior detected',
+        ]))
+
+    # SMS abuse requires API-like endpoints AND phone usage — docs alone must not trigger.
+    if len(auth_urls) >= 2 and has_phone and privesc_score < 10:
+        score = len(auth_urls) * 4 + (4 if has_threading else 0) + min(http_count, 8)
+        ev = [f"{len(auth_urls)} live API URL(s) for registration/SMS/OTP/password-reset (excluding documentation links)"]
         if has_phone:
-            ev.append('Code references phone numbers as the primary input variable')
+            ev.append('Uses phone number variables as primary input')
         if has_threading:
-            ev.append('Uses threading or multiprocessing to parallelize requests')
+            ev.append('Parallelizes requests with threading/multiprocessing')
         if unique_hosts:
-            ev.append(f"Contacts {len(unique_hosts)} distinct third-party service(s): {', '.join(unique_hosts[:6])}{'…' if len(unique_hosts) > 6 else ''}")
+            ev.append(f"Targets {len(unique_hosts)} distinct service(s): {', '.join(unique_hosts[:6])}")
         profiles.append(('sms_otp_abuse', score, ev))
+    elif len(auth_urls) >= 3 and has_phone and privesc_score < 8:
+        profiles.append(('sms_otp_abuse', len(auth_urls) * 3 + 5, [
+            f"{len(auth_urls)} SMS/OTP-related API endpoints with phone-field usage",
+        ]))
 
-    if signals.get('download_exec'):
+    if signals.get('download_exec') and privesc_score < 12:
         profiles.append(('script_dropper', 8 + int(signals.get('obfuscation_score') or 0), [
             'Contains download-and-execute patterns (PowerShell/curl/wscript style)',
         ]))
@@ -94,7 +186,7 @@ def _score_profiles(signals: dict[str, Any]) -> list[tuple[str, int, list[str]]]
 
     if signals.get('persistence'):
         profiles.append(('persistence_tool', 9, [
-            'Implements or references registry Run keys, scheduled tasks, or similar persistence',
+            'References registry Run keys, scheduled tasks, or similar persistence',
         ]))
 
     if signals.get('high_risk_pe_imports'):
@@ -107,9 +199,10 @@ def _score_profiles(signals: dict[str, Any]) -> list[tuple[str, int, list[str]]]
             'Binary packing or protection indicators present',
         ]))
 
-    if http_count >= 3 and not auth_urls:
+    if http_count >= 3 and not auth_urls and privesc_score < 8:
+        label = 'reference URLs' if doc_urls else 'external endpoints'
         profiles.append(('generic_network_tool', http_count, [
-            f'Makes {http_count} automated HTTP call(s) to external services',
+            f"References or contacts {http_count} HTTP {label}",
         ]))
 
     profiles.sort(key=lambda x: x[1], reverse=True)
@@ -125,62 +218,73 @@ def _confidence(score: int) -> str:
 
 
 def _threat_category(profile_id: str) -> str:
-    if profile_id in {'sms_otp_abuse', 'generic_network_tool'}:
+    if profile_id == 'sms_otp_abuse':
         return 'abuse_tool'
+    if profile_id == 'linux_privesc_enum':
+        return 'dual_use_security_tool'
     if profile_id in {'script_dropper', 'credential_stealer', 'persistence_tool', 'remote_access', 'packed_loader', 'process_injection'}:
         return 'malware'
+    if profile_id == 'generic_network_tool':
+        return 'unknown'
     return 'unknown'
 
 
 def _build_summary(profile_id: str, signals: dict[str, Any], services: list[str]) -> str:
+    if profile_id == 'linux_privesc_enum':
+        return (
+            "This behaves like a Linux privilege-escalation enumeration script (e.g. LinPEAS/PEASS-style), "
+            "not an SMS or OTP abuse tool. It hunts for misconfigurations, SUID binaries, sudo rules, "
+            "cron jobs, capabilities, and credential paths — and embeds HackTricks/GTFOBins-style reference links "
+            "for the analyst. URLs in the file are documentation and cheat-sheet targets, not SMS gateways. "
+            "Dual-use: legitimate in scoped pentests; hostile if run without authorization on production hosts."
+        )
     if profile_id == 'sms_otp_abuse':
         svc = ', '.join(services[:8]) if services else 'multiple online services'
-        extra = f" including {svc}" if services else ''
         parallel = ' in parallel' if signals.get('has_threading') else ''
         return (
             f"This appears to be an SMS or OTP abuse tool — not traditional C2 malware. "
-            f"It automates HTTP requests{parallel} to third-party registration, login, or password-reset APIs{extra}, "
-            f"likely to flood victims with verification SMS messages (SMS bombing). "
-            f"VirusTotal may report clean because the file does not contain a known malware signature — "
-            f"the harm is abusive traffic against legitimate services, not host compromise."
+            f"It automates HTTP requests{parallel} to third-party registration or password-reset APIs "
+            f"({svc}), likely to flood phone numbers with verification SMS. "
+            f"VirusTotal may still show clean if the file has no known malware signature."
         )
     if profile_id == 'script_dropper':
         return (
             "This script behaves like a dropper or staged downloader: it retrieves external content "
-            "and is structured to execute or invoke a follow-on payload. Treat as malicious delivery "
-            "infrastructure until proven otherwise."
+            "and is structured to execute or invoke a follow-on payload."
         )
     if profile_id == 'credential_stealer':
-        return (
-            "Behavior suggests credential theft or data exfiltration — webhook or messaging endpoints "
-            "are referenced alongside sensitive collection patterns."
-        )
+        return "Behavior suggests credential theft or data exfiltration via messaging/webhook channels."
     if profile_id == 'process_injection':
-        return (
-            "This binary exposes process manipulation imports consistent with injection, staging, "
-            "or in-memory execution — review as potential malware loader or implant."
-        )
+        return "PE imports indicate process manipulation or injection — review as potential loader/implant."
     if profile_id == 'packed_loader':
-        return "Packed or protected binary — often used to hide a second-stage payload. Sandbox detonation recommended."
+        return "Packed or protected binary — often hides a second-stage payload."
     if profile_id == 'generic_network_tool':
-        return (
-            f"Automated network client contacting {len(signals.get('unique_http_hosts') or [])} external host(s). "
-            "Review whether this is operational tooling, abuse software, or malware staging."
-        )
-    return "Automated behavior analysis could not classify intent with high confidence — use execution chain and IOCs below."
+        doc_n = len(signals.get('documentation_urls') or [])
+        if doc_n:
+            return (
+                f"Script embeds {doc_n} documentation or reference URL(s) alongside local enumeration logic. "
+                "Review the attack chain to determine if this is a security tool, installer, or something else."
+            )
+        return f"Automated network client referencing {len(signals.get('unique_http_hosts') or [])} external host(s)."
+    return "Behavior could not be classified with high confidence — use the execution chain and IOC sections below."
 
 
 def _recommended_action(profile_id: str, threat_category: str, combined_verdict: str) -> str:
+    if profile_id == 'linux_privesc_enum':
+        return (
+            "Treat as offensive-security / post-exploitation enumeration. Authorized pentest use only — "
+            "if found unmanaged on servers, investigate as unauthorized recon and rotate exposed credentials."
+        )
     if profile_id == 'sms_otp_abuse':
         return (
-            "Do not run against phone numbers you do not own. Block or remove if found in your environment — "
-            "this is harassment/abuse tooling. Report to platform abuse teams if deployed; VT clean does not mean benign."
+            "Do not run against phone numbers you do not own. Block or remove if deployed for harassment; "
+            "report to platform abuse teams. VT clean does not mean benign."
         )
     if threat_category == 'malware' or combined_verdict in {'malicious', 'suspicious'}:
         return "Do not execute on production systems. Quarantine, block hash, and investigate delivery path."
     if combined_verdict == 'needs_review':
-        return "Run only in an isolated VM if dynamic behavior is required. Correlate URLs and hashes with CTI before closing."
-    return "Review findings below before execution. No strong malware anchor was confirmed."
+        return "Run only in an isolated VM if dynamic behavior is required. Correlate with scope and sibling files."
+    return "Review findings below before execution."
 
 
 def extract_script_signals(text: str, script_deep: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -191,13 +295,19 @@ def extract_script_signals(text: str, script_deep: dict[str, Any] | None = None)
         if u and u not in urls:
             urls.append(u)
 
-    auth_sms_urls = [u for u in urls if AUTH_SMS_PATH.search(u)]
-    hosts = [_service_name_from_url(u) for u in urls]
+    auth_sms_api_urls = [u for u in urls if is_auth_sms_api_url(u)]
+    documentation_urls = [u for u in urls if is_documentation_url(u)]
+    privesc_score, privesc_evidence = _privesc_signal_strength(text, urls)
+
+    hosts = [_service_name_from_url(u) for u in urls if not is_documentation_url(u)]
+    if not hosts:
+        hosts = [_service_name_from_url(u) for u in urls[:8]]
     unique_hosts = _unique_preserve(hosts)
 
     return {
         'http_call_count': len(script_deep.get('http_calls') or []) or len(urls),
-        'auth_sms_urls': auth_sms_urls,
+        'auth_sms_api_urls': auth_sms_api_urls,
+        'documentation_urls': documentation_urls,
         'unique_http_hosts': unique_hosts,
         'has_phone_fields': bool(PHONE_FIELD.search(text)),
         'has_threading': bool(THREADING.search(text)),
@@ -206,6 +316,8 @@ def extract_script_signals(text: str, script_deep: dict[str, Any] | None = None)
         'persistence': bool(PERSISTENCE.search(text)),
         'obfuscation_score': int(script_deep.get('obfuscation_score') or 0),
         'language': script_deep.get('language') or 'script',
+        'privesc_score': privesc_score,
+        'privesc_evidence': privesc_evidence,
     }
 
 
@@ -215,7 +327,6 @@ def interpret_behavior(
     static: dict[str, Any] | None = None,
     sample_text: str | None = None,
 ) -> dict[str, Any]:
-    """Dynamic plain-English behavior interpretation for deep analysis."""
     deep = bundle.get('deep_exclusive') or {}
     script = deep.get('script') or {}
     pe = deep.get('pe') or {}
@@ -236,8 +347,11 @@ def interpret_behavior(
         profile_id = 'unknown_script' if script else 'unknown_binary'
         score, evidence = 0, ['No strong behavioral template matched — see technical chain below.']
 
-    services = _unique_preserve([_service_name_from_url(u) for u in signals.get('auth_sms_urls') or []])
-    if not services:
+    if profile_id == 'sms_otp_abuse':
+        services = _unique_preserve([_service_name_from_url(u) for u in signals.get('auth_sms_api_urls') or []])
+    elif profile_id == 'linux_privesc_enum':
+        services = _unique_preserve(['HackTricks', 'GTFOBins'] + (signals.get('unique_http_hosts') or [])[:6])
+    else:
         services = signals.get('unique_http_hosts') or []
 
     threat_category = _threat_category(profile_id)
@@ -246,16 +360,31 @@ def interpret_behavior(
     what_it_does = list(evidence)
     if profile_id == 'sms_otp_abuse' and services:
         what_it_does.append(
-            f"Primary effect: trigger SMS/OTP messages via legitimate APIs operated by {', '.join(services[:10])}."
+            f"Primary effect: trigger SMS/OTP via APIs operated by {', '.join(services[:10])}."
+        )
+    if profile_id == 'linux_privesc_enum':
+        what_it_does.append(
+            "Primary effect: enumerate the local Linux host for privilege-escalation paths — not send SMS messages."
         )
     if script.get('execution_chain'):
         what_it_does.append(
-            f"Technical execution: {len(script['execution_chain'])} reconstructed step(s) — see chain below for raw commands."
+            f"Technical detail: {len(script['execution_chain'])} reconstructed step(s) in the chain below."
         )
 
-    network_label = 'Third-party API endpoints (not C2)' if profile_id == 'sms_otp_abuse' else 'Network endpoints'
-    if threat_category == 'abuse_tool':
-        network_label = 'Abuse targets (third-party services)'
+    if profile_id == 'sms_otp_abuse':
+        network_label = 'Third-party API endpoints (not C2)'
+    elif profile_id == 'linux_privesc_enum':
+        network_label = 'Pentest reference links (documentation — not abuse targets)'
+    elif signals.get('documentation_urls'):
+        network_label = 'Reference / documentation URLs'
+    else:
+        network_label = 'Network endpoints'
+
+    vt_context = None
+    if profile_id == 'sms_otp_abuse':
+        vt_context = 'VT often marks abuse tools as undetected — absence of detections does not imply safe use.'
+    elif profile_id == 'linux_privesc_enum':
+        vt_context = 'VT may flag LinPEAS as malicious or hacktool — that reflects dual-use offensive tooling, not SMS abuse.'
 
     return {
         'behavior_class': profile_id,
@@ -265,20 +394,18 @@ def interpret_behavior(
         'threat_category': threat_category,
         'summary': _build_summary(profile_id, signals, services),
         'what_it_does': what_it_does,
-        'notable_services': services,
+        'notable_services': services[:12],
         'network_label': network_label,
         'evidence': evidence,
         'signals': {
             'http_calls': signals.get('http_call_count'),
-            'auth_sms_urls': len(signals.get('auth_sms_urls') or []),
+            'auth_sms_api_urls': len(signals.get('auth_sms_api_urls') or []),
+            'documentation_urls': len(signals.get('documentation_urls') or []),
+            'privesc_score': signals.get('privesc_score'),
             'unique_services': len(services),
             'has_phone_fields': signals.get('has_phone_fields'),
             'has_threading': signals.get('has_threading'),
         },
         'recommended_action': _recommended_action(profile_id, threat_category, combined),
-        'vt_context': (
-            'VT often marks abuse tools as undetected — absence of detections does not imply safe or authorized use.'
-            if threat_category == 'abuse_tool'
-            else None
-        ),
+        'vt_context': vt_context,
     }

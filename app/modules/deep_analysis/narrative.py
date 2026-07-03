@@ -21,10 +21,13 @@ def build_attack_chain(bundle: dict[str, Any]) -> list[dict[str, str]]:
         })
 
     for call in (script.get('http_calls') or [])[:12]:
+        purpose = call.get('purpose') or 'http'
         title = f"{call.get('method', 'HTTP')} → {call.get('url', '')[:100]}"
-        if call.get('purpose') == 'auth/sms/otp':
+        if purpose == 'auth/sms/otp':
             title = f"SMS/OTP trigger: {call.get('method')} {call.get('url', '')[:90]}"
-        chain.append({'stage': call.get('purpose') or 'http', 'title': title, 'source': 'http_call'})
+        elif purpose == 'reference':
+            title = f"Pentest reference link: {call.get('url', '')[:100]}"
+        chain.append({'stage': purpose, 'title': title, 'source': 'http_call'})
 
     for phase in script.get('kill_chain_phases') or []:
         chain.append({'stage': phase.get('phase', ''), 'title': phase.get('label', ''), 'source': 'script_deep'})

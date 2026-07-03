@@ -6,9 +6,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 
+from .behavior import is_auth_sms_api_url, is_documentation_url
+
+# Legacy loose pattern — prefer is_auth_sms_api_url() for classification.
 AUTH_SMS_PATH = re.compile(
-    r'(?:register|signup|sign_up|sign-up|auth/sms|/sms|send.?code|otp|verify|verification|'
-    r'password.?reset|pass-recovery|keycode|getcode|confirm)',
+    r'(?:auth/sms|/sms/send|password.?reset|pass-recovery|keycode|profiles/register|sign_up|signup|/register\b)',
     re.I,
 )
 
@@ -38,7 +40,7 @@ def _extract_http_calls(text: str) -> list[dict[str, str]]:
                 method, url = groups[0].upper(), groups[1]
             else:
                 method, url = 'GET', groups[0]
-            purpose = 'auth/sms/otp' if AUTH_SMS_PATH.search(url) else 'http'
+            purpose = 'auth/sms/otp' if is_auth_sms_api_url(url) else ('reference' if is_documentation_url(url) else 'http')
             calls.append({'method': method, 'url': url, 'purpose': purpose})
     seen: set[str] = set()
     out: list[dict[str, str]] = []
@@ -91,9 +93,12 @@ def _build_execution_chain(http_calls: list[dict[str, str]], commands: list[str]
     step = 1
     for call in http_calls[:15]:
         label = f"{call['method']} {call['url'][:100]}"
-        if call.get('purpose') == 'auth/sms/otp':
+        purpose = call.get('purpose') or 'http'
+        if purpose == 'auth/sms/otp':
             label = f"Trigger SMS/OTP via {call['method']} → {call['url'][:90]}"
-        chain.append({'step': step, 'type': call.get('purpose') or 'http', 'command': label})
+        elif purpose == 'reference':
+            label = f"Reference (privesc/docs): {call['url'][:100]}"
+        chain.append({'step': step, 'type': purpose, 'command': label})
         step += 1
     for cmd in commands:
         if step > 20:
@@ -145,6 +150,7 @@ def analyze_script_deep(path: Path, *, filename: str | None = None) -> dict[str,
         language = 'script'
 
     auth_url_count = sum(1 for c in http_calls if c.get('purpose') == 'auth/sms/otp')
+    doc_url_count = sum(1 for c in http_calls if c.get('purpose') == 'reference')
 
     return {
         'language': language,
@@ -158,5 +164,6 @@ def analyze_script_deep(path: Path, *, filename: str | None = None) -> dict[str,
         'obfuscation_level': 'high' if obfuscation_score >= 4 else ('medium' if obfuscation_score >= 2 else 'low'),
         'likely_stages': len(phases),
         'auth_sms_url_count': auth_url_count,
+        'documentation_url_count': doc_url_count,
         'unique_service_count': len(domains),
     }
