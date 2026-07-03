@@ -6,7 +6,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .cti_query_policy import count_exact_cti_anchors, threatfox_match_is_exact
+from .cti_query_policy import count_cti_sourced_infra, count_exact_cti_anchors, threatfox_match_is_exact
 
 
 def _as_list(v):
@@ -273,10 +273,10 @@ def build_campaign_analysis(result: dict) -> dict:
     if related.get('count',0) > 0:
         score += 15
         evidence.append({'signal':'Known sample overlap','detail':f"{related.get('count')} MalwareBazaar exact match(es)",'weight':15,'source':'MalwareBazaar'})
-    infra_count=sum(len(v) for v in infra.values() if isinstance(v,list))
+    infra_count = count_cti_sourced_infra(infra)
     if infra_count:
-        score += min(20, infra_count*5)
-        evidence.append({'signal':'Infrastructure evidence observed','detail':f'{infra_count} classified infrastructure item(s)','weight':min(20, infra_count*5),'source':'IOC/AbuseCH'})
+        score += min(20, infra_count * 8)
+        evidence.append({'signal': 'CTI-confirmed infrastructure', 'detail': f'{infra_count} exact feed match(es)', 'weight': min(20, infra_count * 8), 'source': 'AbuseCH'})
     tf_matches=int(anchors.get('exact_threatfox') or 0)
     uh_matches=int(anchors.get('exact_urlhaus') or 0)
     if tf_matches:

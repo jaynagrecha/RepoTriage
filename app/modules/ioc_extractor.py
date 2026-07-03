@@ -228,38 +228,34 @@ def merge_iocs(per_file: list[dict]) -> dict:
 
 
 def classify_infrastructure(iocs: dict) -> dict:
-    urls = iocs.get('urls', [])
-    domains = iocs.get('domains', [])
-    ips = iocs.get('ips', [])
+    """Conservative local infra hints — high-confidence exfil/control only.
+
+    Probable C2 / payload delivery buckets are filled from CTI feeds after exact
+    IOC lookup (ThreatFox, URLHaus, Feodo, SSLBL), not URL keyword guessing.
+    """
     discord = iocs.get('discord_webhooks', [])
     telegram = iocs.get('telegram', [])
-    probable_c2 = []
-    control = []
     exfil = []
-    config = []
-    for u in urls:
-        lu = u.lower()
-        if any(x in lu for x in ['pastebin.com','raw.githubusercontent.com','gist.githubusercontent.com','cdn.discordapp.com','transfer.sh','anonfiles','mega.nz']):
-            config.append({'indicator': u, 'type': 'Config/Staging Source', 'confidence': 'Medium'})
-        if any(x in lu for x in ['panel','gate','api.php','loader','payload','update','checkin','connect','task','command']):
-            probable_c2.append({'indicator': u, 'type': 'Probable C2/Staging URL', 'confidence': 'Medium'})
-    for d in domains:
-        ld = d.lower()
-        if ld in {'api.telegram.org','t.me','telegram.me','telegram.dog'}:
-            control.append({'indicator': d, 'type': 'Telegram Control Channel', 'confidence': 'Medium'})
-        elif 'discord' in ld:
-            exfil.append({'indicator': d, 'type': 'Discord/Exfil Infrastructure', 'confidence': 'Medium'})
+    control = []
     for w in discord:
-        exfil.append({'indicator': w, 'type': 'Discord Webhook Exfil Channel', 'confidence': 'High'})
+        exfil.append({
+            'indicator': w,
+            'type': 'Discord Webhook Exfil Channel',
+            'confidence': 'High',
+            'source': 'IOC extraction',
+        })
     for t in telegram:
-        control.append({'indicator': t, 'type': 'Telegram Channel/Bot Reference', 'confidence': 'Medium'})
-    for ip in ips:
-        probable_c2.append({'indicator': ip, 'type': 'External IP in Payload', 'confidence': 'Low'})
+        control.append({
+            'indicator': t,
+            'type': 'Telegram Channel/Bot Reference',
+            'confidence': 'Medium',
+            'source': 'IOC extraction',
+        })
     return {
-        'probable_c2': probable_c2,
+        'probable_c2': [],
         'control_channels': control,
         'exfil_channels': exfil,
-        'config_sources': config,
+        'config_sources': [],
         'payload_delivery': [],
         'malware_downloads': [],
         'known_bad_infrastructure': [],

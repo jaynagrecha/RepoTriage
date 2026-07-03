@@ -10,6 +10,7 @@ import httpx
 
 from .cti_query_policy import (
     filter_threatfox_matches,
+    select_malware_ioc_candidates,
     should_query_threatfox,
 )
 
@@ -274,23 +275,12 @@ def _build_summary(lookups: list[dict], found: list[dict]) -> dict:
 
 
 async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
-    """Lookup extracted IOCs in ThreatFox, with conservative limits to avoid abuse.ch/API pressure."""
+    """Lookup malware IOCs in ThreatFox — exact match, no domain pivots."""
     if not _enabled():
         return {"enabled": False, "status": "disabled", "lookups": [], "found": [], "summary": {"looked_up": 0, "found": 0}, "relationships": {}}
 
     limit = int(os.getenv("THREATFOX_LOOKUP_LIMIT", "75"))
-    candidates = []
-    # ThreatFox is most useful for URLs, domains, IPs and sometimes hashes.
-    for bucket in ["urls", "ips", "domains", "discord_webhooks", "telegram"]:
-        for x in iocs.get(bucket, []) or []:
-            if x and x not in candidates:
-                candidates.append(x)
-    # If future versions add hashes to IOC buckets, this will also pick them up.
-    for bucket in ["hashes", "sha256"]:
-        for x in iocs.get(bucket, []) or []:
-            if x and x not in candidates:
-                candidates.append(x)
-    candidates = candidates[:limit]
+    candidates = select_malware_ioc_candidates(iocs, limit=limit)
 
     lookups = []
     found = []
@@ -311,5 +301,5 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
         "found": found,
         "summary": summary,
         "relationships": relationships,
-        "policy_note": "ThreatFox uses exact_match=true; platform hosts and wildcard pivots are skipped.",
+        "policy_note": "Queries malware IOCs only (URLs, IPs, hashes, webhooks). Domains/emails/wallets are display-only. Exact match; platform hosts skipped.",
     }

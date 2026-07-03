@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 
-from .cti_query_policy import count_exact_cti_anchors
+from .cti_query_policy import count_cti_sourced_infra, count_exact_cti_anchors
 
 
 def _uniq(items):
@@ -183,8 +183,14 @@ def generate_attack_narrative(result: dict) -> dict:
         bullets.append(f"Observed family/signature evidence points to: {family_text}.")
     if iocs:
         bullets.append(f"Static IOC extraction found {iocs} indicator(s), which were enriched against configured CTI sources.")
-    if sum(infra_counts.values()):
-        bullets.append(f"Infrastructure classification identified {infra_counts['probable_c2']} probable C2 item(s), {infra_counts['payload_delivery']} payload delivery item(s), and {infra_counts['exfil_channels']} exfil/control-channel item(s).")
+    if sum(infra_counts.values()) and count_cti_sourced_infra(result.get('infrastructure') or {}):
+        bullets.append(
+            f"CTI-confirmed infrastructure: {count_cti_sourced_infra(result.get('infrastructure') or {})} item(s) from ThreatFox/URLHaus/Feodo/SSLBL exact lookups."
+        )
+    elif sum(infra_counts.values()):
+        bullets.append(
+            f"Extracted {infra_counts['exfil_channels']} exfil/control IOC(s) pending or without CTI confirmation."
+        )
     if mitre_rows:
         bullets.append(f"MITRE ATT&CK mapping produced {len((result.get('mitre') or {}).get('techniques') or [])} technique candidate(s), led by {', '.join(_uniq([m.get('id') for m in mitre_rows[:4]]))}.")
 

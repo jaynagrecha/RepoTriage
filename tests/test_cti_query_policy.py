@@ -3,10 +3,12 @@ import unittest
 from app.modules.cti_fusion import build_campaign_analysis, build_cti_dashboard
 from app.modules.cti_query_policy import (
     filter_threatfox_matches,
+    select_malware_ioc_candidates,
     should_query_threatfox,
     should_query_urlhaus,
     threatfox_match_is_exact,
 )
+from app.modules.ioc_extractor import classify_infrastructure
 from app.modules.narrative import _risk_level
 
 
@@ -14,22 +16,42 @@ class TestCtiQueryPolicy(unittest.TestCase):
     def test_skips_bare_github_com(self):
         allowed, reason = should_query_threatfox('github.com')
         self.assertFalse(allowed)
-        self.assertEqual(reason, 'platform_host')
+        self.assertEqual(reason, 'domain_only_not_queried')
 
-    def test_allows_full_github_file_url(self):
+    def test_skips_platform_full_url(self):
         url = 'https://github.com/user/repo/blob/main/payload.js'
         allowed, reason = should_query_threatfox(url)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, 'platform_url')
+
+    def test_allows_non_platform_malware_url(self):
+        allowed, reason = should_query_threatfox('https://evil-c2.example/a.js')
         self.assertTrue(allowed)
         self.assertEqual(reason, 'exact_url')
+
+    def test_skips_standalone_domains_in_candidate_list(self):
+        iocs = {
+            'urls': ['https://evil.example/x'],
+            'domains': ['evil.example', 'github.com'],
+            'ips': ['8.8.8.8'],
+            'emails': ['a@b.com'],
+            'wallets': ['0x' + 'a' * 40],
+        }
+        cands = select_malware_ioc_candidates(iocs)
+        self.assertIn('https://evil.example/x', cands)
+        self.assertIn('8.8.8.8', cands)
+        self.assertNotIn('evil.example', cands)
+        self.assertNotIn('github.com', cands)
 
     def test_urlhaus_rejects_domain_only(self):
         allowed, reason = should_query_urlhaus('evil.example.com')
         self.assertFalse(allowed)
         self.assertEqual(reason, 'urlhaus_requires_full_url')
 
-    def test_urlhaus_allows_full_url(self):
-        allowed, _ = should_query_urlhaus('https://evil.example.com/a/b.zip')
-        self.assertTrue(allowed)
+    def test_urlhaus_skips_platform_url(self):
+        allowed, reason = should_query_urlhaus('https://github.com/x/y')
+        self.assertFalse(allowed)
+        self.assertEqual(reason, 'platform_url')
 
     def test_filter_threatfox_keeps_exact_only(self):
         indicator = 'https://evil.example.com/a.js'
@@ -40,6 +62,21 @@ class TestCtiQueryPolicy(unittest.TestCase):
         out = filter_threatfox_matches(indicator, matches)
         self.assertEqual(len(out), 1)
         self.assertTrue(threatfox_match_is_exact(indicator, out[0]['ioc']))
+
+
+class TestClassifyInfrastructure(unittest.TestCase):
+    def test_no_keyword_probable_c2(self):
+        infra = classify_infrastructure({
+            'urls': ['https://evil.example/update.php?cmd=1'],
+            'ips': ['8.8.8.8'],
+            'domains': ['evil.example'],
+        })
+        self.assertEqual(infra['probable_c2'], [])
+        self.assertEqual(len(infra['exfil_channels']), 0)
+
+    def test_discord_webhook_exfil_only(self):
+        infra = classify_infrastructure({'discord_webhooks': ['https://discord.com/api/webhooks/1/x']})
+        self.assertEqual(len(infra['exfil_channels']), 1)
 
 
 class TestCtiFusionExactAttribution(unittest.TestCase):
@@ -77,11 +114,11 @@ class TestCtiFusionExactAttribution(unittest.TestCase):
 
 
 class TestNarrativeRiskExactOnly(unittest.TestCase):
-    def test_broad_abuse_counts_no_longer_critical(self):
+    def test_heuristic_infra_no_longer_critical(self):
         result = {
             'files': [{'vt_verdict': 'clean'}],
             'file_stats': {'iocs': 0},
-            'infrastructure': {'probable_c2': [{'indicator': 'https://github.com/other/repo', 'type': 'Probable C2'}]},
+            'infrastructure': {'probable_c2': [{'indicator': 'https://evil.example/update', 'type': 'Probable C2'}]},
             'threat_intel': {
                 'threatfox': {'found': []},
                 'malwarebazaar': {'summary': {'found': 0}, 'results': []},

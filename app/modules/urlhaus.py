@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .cti_query_policy import should_query_urlhaus
+from .cti_query_policy import select_malware_ioc_candidates, should_query_urlhaus
 
 URLHAUS_URL_API = "https://urlhaus-api.abuse.ch/v1/url/"
 URLHAUS_HOST_API = "https://urlhaus-api.abuse.ch/v1/host/"
@@ -190,11 +190,8 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
         return {"enabled": False, "status": "disabled", "results": [], "summary": {"looked_up": 0, "found": 0}}
     limit = int(os.getenv("URLHAUS_LOOKUP_LIMIT", "75"))
     results = []
-    candidates = []
-    for u in iocs.get("urls", []) or []:
-        if u not in candidates:
-            candidates.append(u)
-    for typ, value in [("url", u) for u in candidates[:limit]]:
+    candidates = [u for u in select_malware_ioc_candidates(iocs, limit=limit) if (u or '').strip().lower().startswith(('http://', 'https://'))]
+    for value in candidates:
         allowed, skip_reason = should_query_urlhaus(value)
         if not allowed:
             results.append({
@@ -212,5 +209,5 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
         "exact_url_only": True,
         "results": results,
         "summary": _summary(results),
-        "policy_note": "URLHaus uses exact URL lookup only; host-wide domain pivots are disabled.",
+        "policy_note": "URLHaus queries exact malware-delivery URLs only. Domains, platform URLs, and heuristic infra are skipped.",
     }
