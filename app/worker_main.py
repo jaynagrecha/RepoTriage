@@ -19,7 +19,7 @@ from .modules.family_parser import parse_family_indicators
 from .modules.deep_analysis import (
     run_deep_exclusive, build_deep_narrative, build_attack_chain, interpret_behavior, analyze_semantic,
 )
-from .modules.deep_analysis.llm_semantic import enrich_semantic_with_llm
+from .modules.deep_analysis.llm_semantic import enrich_semantic_with_llm, llm_configured
 from .modules.deep_analysis.intel import enrich_file_intel
 from .modules.detection_policy import combine_deep_verdict
 from .modules.static_analysis.store import load_record
@@ -27,7 +27,7 @@ from .modules.static_analysis import analyze_file_async
 from .modules.static_analysis.indicators import build_extracted_indicators
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.14'
+PLATFORM_VERSION = '4.0.0-alpha.15'
 LOG = logging.getLogger('repotriage.worker')
 
 
