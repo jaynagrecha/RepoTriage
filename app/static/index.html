@@ -114,7 +114,12 @@ const tabGroups=[
   {label:'Reporting',tabs:['Exports','Analyst Report','Attack Narrative','MITRE ATT&CK','Raw JSON']}
 ];
 const tabNames=tabGroups.flatMap(g=>g.tabs);
-let current=null;let currentJobId=null;
+let current=null;let currentJobId=null;let staticFileIndex={};
+function fileNameForSha256(sha256,fallback){return staticFileIndex[sha256]||fallback||''}
+function analysisFileBanner(filename,sha256,kind){
+ const name=filename||fileNameForSha256(sha256)||'Unknown file';
+ return `<div class="info-box" style="margin-bottom:12px;background:#0a1a24;border-color:var(--accent2)"><div class="info-label">Analysed file · ${esc(kind)}</div><div style="font-size:20px;font-weight:800;margin-top:4px;word-break:break-word">${esc(name)}</div><div class="mono small" style="margin-top:6px;opacity:.85">SHA256: ${esc(sha256||'-')}</div></div>`;
+}
 function apiDetail(err){if(!err)return''; if(typeof err==='string')return err; if(err.message)return err.message; if(typeof err==='object')return err.message||JSON.stringify(err); return String(err)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function verdictClass(v){v=String(v||'').toLowerCase(); if(v.includes('malicious'))return 'bad'; if(v.includes('suspicious'))return 'warn'; if(v.includes('clean'))return 'ok'; return ''}
@@ -163,7 +168,7 @@ async function analyze(){
  }catch(e){document.getElementById('status').innerHTML=`<span class="err">${esc(e.message)}</span>`}
  finally{btn.disabled=false; refreshUsage()}
 }
-function render(j){document.getElementById('results').style.display='block';const f=j.root_file||{}, fs=j.file_stats||{}, c=j.cti_dashboard||{}, ca=j.campaign_analysis||{}, ta=j.threat_actor_assessment||{};document.getElementById('cards').innerHTML=`<div class="card"><div class="k">Overall Risk</div><div class="v ${c.risk==='Critical'||c.risk==='High'?'err':(c.risk==='Medium'?'pending':'ok')}">${esc(c.risk||j.vt?.verdict||'unknown')}</div></div><div class="card"><div class="k">Primary Family</div><div class="v">${esc(c.primary_family||j.family?.name||'Unknown')}</div></div><div class="card"><div class="k">Campaign</div><div class="v">${esc(ca.candidate||'Unknown')}</div><div class="small">${esc(ca.confidence_band||'Low')} · ${esc(ca.confidence_score||0)}%</div></div><div class="card"><div class="k">Threat Actor</div><div class="v">${esc(ta.primary_assessment||'Unknown')}</div><div class="small">${esc(ta.confidence_band||'Low')} · ${esc(ta.confidence_score||0)}%</div></div><div class="card"><div class="k">Malicious Files</div><div class="v ${fs.malicious?'err':''}">${esc(fs.malicious||0)}</div><div class="small">${esc(fs.total_listed||1)} total listed</div></div>`
+function render(j){document.getElementById('results').style.display='block';staticFileIndex={};(j.files||[]).forEach(x=>{if(x.sha256)staticFileIndex[x.sha256]=displayName(x)});const f=j.root_file||{}, fs=j.file_stats||{}, c=j.cti_dashboard||{}, ca=j.campaign_analysis||{}, ta=j.threat_actor_assessment||{};document.getElementById('cards').innerHTML=`<div class="card"><div class="k">Overall Risk</div><div class="v ${c.risk==='Critical'||c.risk==='High'?'err':(c.risk==='Medium'?'pending':'ok')}">${esc(c.risk||j.vt?.verdict||'unknown')}</div></div><div class="card"><div class="k">Primary Family</div><div class="v">${esc(c.primary_family||j.family?.name||'Unknown')}</div></div><div class="card"><div class="k">Campaign</div><div class="v">${esc(ca.candidate||'Unknown')}</div><div class="small">${esc(ca.confidence_band||'Low')} · ${esc(ca.confidence_score||0)}%</div></div><div class="card"><div class="k">Threat Actor</div><div class="v">${esc(ta.primary_assessment||'Unknown')}</div><div class="small">${esc(ta.confidence_band||'Low')} · ${esc(ta.confidence_score||0)}%</div></div><div class="card"><div class="k">Malicious Files</div><div class="v ${fs.malicious?'err':''}">${esc(fs.malicious||0)}</div><div class="small">${esc(fs.total_listed||1)} total listed</div></div>`
 const tabs=document.getElementById('tabs');
 tabs.innerHTML=tabGroups.map(g=>`<div class="tab-section"><span class="tab-section-label">${esc(g.label)}</span>${g.tabs.map(t=>{const i=tabNames.indexOf(t); return `<button class="tab ${i==0?'active':''}" data-tab="${i}" onclick="showTab(${i})">${esc(t)}</button>`}).join('')}<span class="tab-sep"></span></div>`).join('');
 document.getElementById('tabcontent').innerHTML=tabNames.map((t,i)=>`<div class="tabbody ${i==0?'active':''}" id="tab${i}">${tabHtml(t,j)}</div>`).join('');
@@ -200,6 +205,7 @@ function staticIndicatorList(title, items, link=false){
 }
 function renderStaticDetail(sha256,report){
  const el=document.getElementById('staticDetail'); if(!el)return;
+ const fname=report.filename||fileNameForSha256(sha256);
  const n=report.analyst_narrative||{}; const v=report.static_verdict||{}; const ind=report.extracted_indicators||{};
  const label=v.verdict_label||n.headline||v.verdict||report.status||'Unknown';
  const what=(n.what_it_does||[]).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No summary available.</li>';
@@ -207,7 +213,8 @@ function renderStaticDetail(sha256,report){
  const counts=ind.counts||{};
  const countCards=`<div class="cards" style="margin-top:14px"><div class="card"><div class="k">URLs</div><div class="v ${counts.urls?'err':''}">${esc(counts.urls||0)}</div></div><div class="card"><div class="k">Domains</div><div class="v ${counts.domains?'pending':''}">${esc(counts.domains||0)}</div></div><div class="card"><div class="k">IPs</div><div class="v">${esc(counts.ips||0)}</div></div><div class="card"><div class="k">Emails</div><div class="v">${esc(counts.emails||0)}</div></div><div class="card"><div class="k">Decoded</div><div class="v">${esc(counts.decoded_artifacts||0)}</div></div></div>`;
  const indicatorsBlock=`<h3 class="subhead">Extracted from this file</h3>${countCards}<div class="grid2">${staticIndicatorList('URLs', ind.urls||[], true)}${staticIndicatorList('Domains', ind.domains||[])}${staticIndicatorList('IP addresses', ind.ips||[])}${staticIndicatorList('Email addresses', ind.emails||[])}${staticIndicatorList('Discord webhooks', ind.discord_webhooks||[], true)}${staticIndicatorList('Telegram links', ind.telegram||[], true)}${staticIndicatorList('Crypto wallets', ind.wallets||[])}${staticIndicatorList('Decoded / de-obfuscated strings', ind.decoded_artifacts||[])}${staticIndicatorList('Registry / persistence markers', ind.registry_markers||[])}${staticIndicatorList('File paths referenced', ind.file_paths||[])}</div>`;
- el.innerHTML=`<div class="root-card" style="padding:18px;border:1px solid rgba(255,98,98,.35);background:rgba(255,98,98,.06)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Static analysis result</div><div style="font-size:28px;font-weight:700" class="${verdictClass(v.verdict||label)}">${esc(label)}</div><div class="small" style="margin-top:8px">${esc(n.confidence_plain||('Confidence '+ (v.confidence??'-') + '%'))}</div></div>
+ el.innerHTML=`${analysisFileBanner(fname,sha256,'Static analysis')}
+ <div class="root-card" style="padding:18px;border:1px solid rgba(255,98,98,.35);background:rgba(255,98,98,.06)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Static analysis result</div><div style="font-size:28px;font-weight:700" class="${verdictClass(v.verdict||label)}">${esc(label)}</div><div class="small" style="margin-top:8px">${esc(n.confidence_plain||('Confidence '+ (v.confidence??'-') + '%'))}</div></div>
  <div class="info-box" style="margin-top:14px"><b>What you need to know</b><ul style="margin:10px 0 0 18px;line-height:1.6">${what}</ul></div>
  ${indicatorsBlock}
  <div class="info-box" style="margin-top:12px;border-color:rgba(255,209,102,.35)"><b>Recommended action</b><div class="small" style="margin-top:6px;line-height:1.5">${esc(n.assessment||'Review this file in an isolated environment before trusting it.')}</div></div>
@@ -219,6 +226,7 @@ function renderStaticDetail(sha256,report){
 }
  async function runDeepAnalysis(sha256, btn){
   if(!currentJobId)return alert('Run a completed job first');
+  const fname=fileNameForSha256(sha256);
   if(btn)btn.disabled=true;
   try{
     const r=await fetch(`/api/v4/jobs/${currentJobId}/files/${sha256}/deep-analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})});
@@ -231,7 +239,7 @@ function renderStaticDetail(sha256,report){
       const pj=await pr.json();
       if(pj.status==='completed'&&pj.artifact){renderDeepDetail(sha256,pj.artifact);return}
       if(pj.status==='failed')throw new Error(pj.task?.error||'Deep analysis failed');
-      const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`<div class="info-box"><b>Deep analysis running…</b><div class="small">${esc(pj.status||'queued')} · YARA · sandbox-lite · IOC reputation · similarity</div></div>`;
+      const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`${analysisFileBanner(fname||pj.artifact?.filename,sha256,'Deep analysis')}<div class="info-box"><b>Deep analysis running…</b><div class="small">${esc(pj.status||'queued')} · YARA · sandbox-lite · IOC reputation · similarity</div></div>`;
       await new Promise(res=>setTimeout(res,2000));
     }
     throw new Error('Deep analysis timed out');
@@ -240,6 +248,7 @@ function renderStaticDetail(sha256,report){
 }
 function renderDeepDetail(sha256,b){
  const el=document.getElementById('staticDetail'); if(!el)return;
+ const fname=b.filename||fileNameForSha256(sha256);
  const cv=b.combined_verdict||'unknown';
  const dn=b.deep_narrative||{};
  const deep=b.deep_exclusive||{};
@@ -260,7 +269,8 @@ function renderDeepDetail(sha256,b){
  const cmdHtml=(script.commands_reconstructed||[]).map(c=>`<div class="mono" style="margin:6px 0;padding:8px;background:#050d13;border-radius:8px">${esc(c)}</div>`).join('')||'';
  const peRisks=(pe.risk_imports||[]).slice(0,10).map(r=>`<div class="small"><b>${esc(r.category)}</b> — ${esc(r.import)} — ${esc(r.risk)}</div>`).join('');
  const yaraHtml=yaraMatches.map(m=>`<div class="small"><b>${esc(m.rule)}</b> ${esc((m.meta||{}).description||'')} ${(m.strings||[]).slice(0,2).map(s=>`<div class="mono">${esc(s)}</div>`).join('')}</div>`).join('')||'<div class="small">No YARA matches (install yara-python in Docker for full coverage).</div>';
- el.innerHTML=`<div class="root-card" style="padding:18px;border:1px solid rgba(92,183,255,.45);background:rgba(92,183,255,.08)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Deep investigation report · not the same as static analysis</div><div style="font-size:28px;font-weight:700" class="${verdictClass(cv)}">${esc(cv)}</div><div style="font-size:18px;margin-top:8px;color:var(--accent2)">${esc(dn.headline||'Deep analysis complete')}</div><div class="small" style="margin-top:8px">Static reference: ${esc(staticRef.verdict||'not run')} · Mode: ${esc(deep.primary_mode||'-')} · Exclusive findings: ${esc(delta.exclusive_count||0)}</div></div>
+ el.innerHTML=`${analysisFileBanner(fname,sha256,'Deep analysis')}
+ <div class="root-card" style="padding:18px;border:1px solid rgba(92,183,255,.45);background:rgba(92,183,255,.08)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Deep investigation report · not the same as static analysis</div><div style="font-size:28px;font-weight:700" class="${verdictClass(cv)}">${esc(cv)}</div><div style="font-size:18px;margin-top:8px;color:var(--accent2)">${esc(dn.headline||'Deep analysis complete')}</div><div class="small" style="margin-top:8px">Static reference: ${esc(staticRef.verdict||'not run')} · Mode: ${esc(deep.primary_mode||'-')} · Exclusive findings: ${esc(delta.exclusive_count||0)}</div></div>
  <div class="info-box" style="margin-top:14px;border-color:rgba(92,183,255,.35)"><b>What deep analysis adds</b><div class="small" style="margin-bottom:8px">${esc(dn.static_vs_deep||'')}</div><ul style="margin:8px 0 0 18px;line-height:1.6">${bullets}</ul></div>
  <div class="info-box" style="margin-top:12px"><b>Recommended action</b><div class="small" style="margin-top:6px;line-height:1.5">${esc(dn.assessment||'')}</div></div>
  <h3 class="subhead">Attack chain / execution flow</h3><div class="iocbox">${chainHtml||'<div class="small">No chain reconstructed.</div>'}</div>
@@ -340,7 +350,7 @@ async function runStaticAnalysis(sha256, btn, force=false){
      const pj=await pr.json();
      if(!pr.ok)throw new Error(apiDetail(pj.detail)||'Static analysis polling failed');
      if(pj.status==='completed'||pj.status==='failed'){renderStaticDetail(sha256,pj); refreshStaticTable(); return}
-     const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`<div class="info-box"><b>Analysing file…</b><div class="small">${esc(pj.status||'running')} · ${esc(pj.filename||sha256.slice(0,12))}</div></div>`;
+     const el=document.getElementById('staticDetail'); if(el)el.innerHTML=`${analysisFileBanner(pj.filename||fileNameForSha256(sha256),sha256,'Static analysis')}<div class="info-box"><b>Analysing file…</b><div class="small">${esc(pj.status||'running')}</div></div>`;
      await new Promise(res=>setTimeout(res,1000));
    }
    throw new Error('Static analysis timed out');
@@ -354,6 +364,8 @@ async function refreshStaticTable(){
    const r=await fetch(`/api/jobs/${currentJobId}/static-analysis`);
    const j=await r.json();
    if(!r.ok){host.innerHTML=`<div class="err">${esc(apiDetail(j.detail)||'Unable to load static analysis inventory')}</div>`; return}
+   staticFileIndex={};
+   (j.files||[]).forEach(f=>{if(f.sha256)staticFileIndex[f.sha256]=f.filename});
    host.innerHTML=staticFilesTable(j.files||[]);
  }catch(e){host.innerHTML=`<div class="err">${esc(e.message)}</div>`}
 }
