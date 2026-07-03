@@ -117,8 +117,11 @@ class TestLinPeasBehavior(unittest.TestCase):
         self.assertEqual(behavior['behavior_title'], 'Linux privilege-escalation enumerator')
         self.assertIn('privilege-escalation', behavior['summary'].lower())
         self.assertTrue(behavior['summary'].lower().startswith('this behaves like a linux'))
-        self.assertNotIn('likely to flood phone', behavior['summary'].lower())
-        self.assertIn('not send sms', ' '.join(behavior['what_it_does']).lower())
+        self.assertNotIn('sms', behavior['summary'].lower())
+        self.assertNotIn('otp', behavior['summary'].lower())
+        joined = ' '.join(behavior['what_it_does'] + [behavior.get('vt_context') or '']).lower()
+        self.assertNotIn('sms', joined)
+        self.assertNotIn('otp', joined)
 
     def test_hacktricks_signature_verification_url_not_auth_sms(self):
         from app.modules.deep_analysis.behavior import is_auth_sms_api_url, is_documentation_url

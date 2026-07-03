@@ -232,10 +232,9 @@ def _threat_category(profile_id: str) -> str:
 def _build_summary(profile_id: str, signals: dict[str, Any], services: list[str]) -> str:
     if profile_id == 'linux_privesc_enum':
         return (
-            "This behaves like a Linux privilege-escalation enumeration script (e.g. LinPEAS/PEASS-style), "
-            "not an SMS or OTP abuse tool. It hunts for misconfigurations, SUID binaries, sudo rules, "
-            "cron jobs, capabilities, and credential paths — and embeds HackTricks/GTFOBins-style reference links "
-            "for the analyst. URLs in the file are documentation and cheat-sheet targets, not SMS gateways. "
+            "This behaves like a Linux privilege-escalation enumeration script (e.g. LinPEAS/PEASS-style). "
+            "It hunts for misconfigurations, SUID binaries, sudo rules, cron jobs, capabilities, and credential paths, "
+            "and embeds HackTricks/GTFOBins-style reference links for the analyst. "
             "Dual-use: legitimate in scoped pentests; hostile if run without authorization on production hosts."
         )
     if profile_id == 'sms_otp_abuse':
@@ -364,7 +363,7 @@ def interpret_behavior(
         )
     if profile_id == 'linux_privesc_enum':
         what_it_does.append(
-            "Primary effect: enumerate the local Linux host for privilege-escalation paths — not send SMS messages."
+            "Primary effect: enumerate the local Linux host for privilege-escalation paths."
         )
     if script.get('execution_chain'):
         what_it_does.append(
@@ -374,7 +373,7 @@ def interpret_behavior(
     if profile_id == 'sms_otp_abuse':
         network_label = 'Third-party API endpoints (not C2)'
     elif profile_id == 'linux_privesc_enum':
-        network_label = 'Pentest reference links (documentation — not abuse targets)'
+        network_label = 'Pentest reference links (documentation)'
     elif signals.get('documentation_urls'):
         network_label = 'Reference / documentation URLs'
     else:
@@ -384,7 +383,7 @@ def interpret_behavior(
     if profile_id == 'sms_otp_abuse':
         vt_context = 'VT often marks abuse tools as undetected — absence of detections does not imply safe use.'
     elif profile_id == 'linux_privesc_enum':
-        vt_context = 'VT may flag LinPEAS as malicious or hacktool — that reflects dual-use offensive tooling, not SMS abuse.'
+        vt_context = 'VT may flag LinPEAS as malicious or hacktool — that reflects dual-use offensive security tooling.'
 
     return {
         'behavior_class': profile_id,
