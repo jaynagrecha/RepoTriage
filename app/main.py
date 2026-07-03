@@ -35,8 +35,8 @@ from .platform.worker_config import inline_worker_enabled
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.1'
-PLATFORM_VERSION = '4.0.0-alpha.1'
+APP_VERSION = '4.0.0-alpha.2'
+PLATFORM_VERSION = '4.0.0-alpha.2'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')

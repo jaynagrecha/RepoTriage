@@ -241,23 +241,41 @@ function renderStaticDetail(sha256,report){
 function renderDeepDetail(sha256,b){
  const el=document.getElementById('staticDetail'); if(!el)return;
  const cv=b.combined_verdict||'unknown';
- const staticV=(b.static_analysis?.static_verdict?.verdict_label)||'-';
+ const dn=b.deep_narrative||{};
+ const deep=b.deep_exclusive||{};
+ const script=deep.script||{};
+ const pe=deep.pe||{};
+ const delta=deep.delta||{};
+ const chain=b.attack_chain||[];
  const yaraMatches=(b.yara?.matches||[]);
- const yara=yaraMatches.map(m=>m.rule).join(', ')||'none';
- const sb=(b.sandbox_lite?.behaviors||[]).join(', ')||'none';
- const urls=(b.static_analysis?.extracted_indicators?.urls||[]).slice(0,10);
- const rep=(b.ioc_reputation?.results||[]).filter(x=>x.malicious>0).map(x=>x.url);
- const reasons=(b.confidence_explanation?.reasons||[]).slice(0,8);
+ const mb=(b.file_intel?.malwarebazaar)||{};
+ const tf=(b.file_intel?.threatfox)||{};
+ const rep=(b.ioc_reputation?.results||[]).filter(x=>(x.malicious||0)>0);
  const similar=(b.similarity?.similar_samples||[]).slice(0,5);
- const family=(b.family_hints?.family_matches||[]).map(x=>x.family).join(', ')||'none';
- const certs=(b.cert_intel?.results||[]).filter(x=>x.certificates?.length).slice(0,3);
- el.innerHTML=`<div class="root-card" style="padding:18px"><div style="font-size:13px;opacity:.8">Deep analysis (Render worker)</div><div style="font-size:26px;font-weight:700" class="${verdictClass(cv)}">${esc(cv)}</div><div class="small">Static: ${esc(staticV)} · YARA: ${esc(yara)} · Behaviors: ${esc(sb)} · Family hints: ${esc(family)}</div></div>
- ${reasons.length?`<div class="info-box" style="margin-top:12px"><b>Why this verdict</b>${reasons.map(r=>`<div class="small"><span class="badge ok">${esc(r.source)}</span> <b>${esc(r.label||'-')}</b> — ${esc(r.evidence||'')}</div>`).join('')}</div>`:''}
- <div class="info-box" style="margin-top:12px"><b>Extracted URLs</b><div class="small">${urls.length?urls.map(u=>`<div><a href="${esc(u)}" target="_blank">${esc(u)}</a></div>`).join(''):'None found'}</div></div>
- ${rep.length?`<div class="info-box"><b>Malicious URLs (VT lookup)</b><div class="small">${rep.map(u=>esc(u)).join('<br>')}</div></div>`:''}
- ${yaraMatches.length?`<div class="info-box"><b>YARA matches</b><div class="small">${yaraMatches.map(m=>`<div><b>${esc(m.rule)}</b> ${esc((m.meta||{}).description||'')}</div>`).join('')}</div></div>`:''}
- ${similar.length?`<div class="info-box"><b>Similar samples (ssdeep)</b><div class="small">${similar.map(s=>`<div class="mono">${esc(s.sha256||'-')} · ${esc(s.similarity||0)}% · ${esc(s.filename||'')}</div>`).join('')}</div></div>`:''}
- ${certs.length?`<div class="info-box"><b>Certificate transparency (crt.sh)</b><div class="small">${certs.map(c=>`<div><b>${esc(c.domain)}</b> — ${esc(c.cert_count||0)} cert(s)</div>`).join('')}</div></div>`:''}
+ const family=(b.family_hints?.family_matches||[]);
+ const staticRef=b.static_reference||{};
+ const bullets=(dn.summary_bullets||[]).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>No deep summary available.</li>';
+ const exclusive=(delta.exclusive_findings||[]).slice(0,15).map(x=>`<div class="iocitem"><span class="badge ok">${esc(x.type)}</span> <span class="mono">${esc(x.value)}</span><div class="small">source: ${esc(x.source)}</div></div>`).join('')||'<div class="small">No exclusive deep-only indicators beyond static.</div>';
+ const chainHtml=chain.map(s=>`<div class="iocitem"><span class="badge warn">${esc(s.stage)}</span> ${esc(s.title)}<div class="small">${esc(s.source)}</div></div>`).join('');
+ const cmdHtml=(script.commands_reconstructed||[]).map(c=>`<div class="mono" style="margin:6px 0;padding:8px;background:#050d13;border-radius:8px">${esc(c)}</div>`).join('')||'';
+ const peRisks=(pe.risk_imports||[]).slice(0,10).map(r=>`<div class="small"><b>${esc(r.category)}</b> — ${esc(r.import)} — ${esc(r.risk)}</div>`).join('');
+ const yaraHtml=yaraMatches.map(m=>`<div class="small"><b>${esc(m.rule)}</b> ${esc((m.meta||{}).description||'')} ${(m.strings||[]).slice(0,2).map(s=>`<div class="mono">${esc(s)}</div>`).join('')}</div>`).join('')||'<div class="small">No YARA matches (install yara-python in Docker for full coverage).</div>';
+ el.innerHTML=`<div class="root-card" style="padding:18px;border:1px solid rgba(92,183,255,.45);background:rgba(92,183,255,.08)"><div style="font-size:13px;opacity:.8;margin-bottom:6px">Deep investigation report · not the same as static analysis</div><div style="font-size:28px;font-weight:700" class="${verdictClass(cv)}">${esc(cv)}</div><div style="font-size:18px;margin-top:8px;color:var(--accent2)">${esc(dn.headline||'Deep analysis complete')}</div><div class="small" style="margin-top:8px">Static reference: ${esc(staticRef.verdict||'not run')} · Mode: ${esc(deep.primary_mode||'-')} · Exclusive findings: ${esc(delta.exclusive_count||0)}</div></div>
+ <div class="info-box" style="margin-top:14px;border-color:rgba(92,183,255,.35)"><b>What deep analysis adds</b><div class="small" style="margin-bottom:8px">${esc(dn.static_vs_deep||'')}</div><ul style="margin:8px 0 0 18px;line-height:1.6">${bullets}</ul></div>
+ <div class="info-box" style="margin-top:12px"><b>Recommended action</b><div class="small" style="margin-top:6px;line-height:1.5">${esc(dn.assessment||'')}</div></div>
+ <h3 class="subhead">Attack chain / execution flow</h3><div class="iocbox">${chainHtml||'<div class="small">No chain reconstructed.</div>'}</div>
+ ${cmdHtml?`<h3 class="subhead">Reconstructed commands</h3><div class="info-box">${cmdHtml}</div>`:''}
+ ${exclusive?`<h3 class="subhead">Findings static analysis did not show <span class="badge">${esc(delta.exclusive_count||0)}</span></h3><div class="iocbox">${exclusive}</div>`:''}
+ <div class="grid2" style="margin-top:12px">
+ ${mb.found?`<div class="info-box"><b>MalwareBazaar</b><div class="small"><b>${esc(mb.family)}</b> · ${esc(mb.signature||'')} · tags: ${esc((mb.tags||[]).join(', '))} ${mb.link?`<div><a href="${esc(mb.link)}" target="_blank">Open sample</a></div>`:''}</div></div>`:''}
+ ${rep.length?`<div class="info-box"><b>Live malicious URLs (VT)</b><div class="small">${rep.map(u=>`<div>${esc(u.url)} · ${esc(u.malicious)} detections</div>`).join('')}</div></div>`:''}
+ ${yaraMatches.length?`<div class="info-box"><b>YARA signatures</b>${yaraHtml}</div>`:''}
+ ${peRisks?`<div class="info-box"><b>PE import risks</b>${peRisks}${(pe.packer_hints||[]).map(h=>`<div class="small pending">${esc(h)}</div>`).join('')}</div>`:''}
+ ${(script.c2_urls||[]).length?`<div class="info-box"><b>C2 / callback URLs (deep)</b><div class="small">${(script.c2_urls||[]).map(u=>`<div><a href="${esc(u)}" target="_blank">${esc(u)}</a></div>`).join('')}</div></div>`:''}
+ ${family.length?`<div class="info-box"><b>Family hints</b><div class="small">${family.map(f=>`<div>${esc(f.family)} (${esc(f.hits)} hits)</div>`).join('')}</div></div>`:''}
+ ${similar.length?`<div class="info-box"><b>Similar samples</b><div class="small">${similar.map(s=>`<div class="mono">${esc(s.sha256||'-')} · ${esc(s.similarity||0)}%</div>`).join('')}</div></div>`:''}
+ </div>
+ <div class="btnrow" style="margin-top:14px"><button onclick="runStaticAnalysis('${sha256}', this, false)">View static RE report</button><button onclick="runDeepAnalysis('${sha256}', this)">Re-run deep</button></div>
  <details class="rel"><summary>Full deep analysis JSON</summary><pre>${esc(JSON.stringify(b,null,2))}</pre></details>`;
 }
 function platformCasesHtml(){
@@ -305,7 +323,7 @@ async function runJobDiff(){
  try{const r=await fetch(`/api/v4/jobs/diff?job_a=${encodeURIComponent(a)}&job_b=${encodeURIComponent(b)}`); const j=await r.json(); if(!r.ok)throw new Error(apiDetail(j.detail)); el.innerHTML=`<pre>${esc(JSON.stringify(j,null,2))}</pre>`;}catch(e){if(el)el.innerHTML=`<div class="err">${esc(e.message)}</div>`}
 }
 function staticAnalysisHtml(){
- return `<div class="info-box"><b>Static &amp; Deep Analysis</b><div class="small"><b>Analyse</b> = fast static RE. <b>Deep</b> = worker pipeline (YARA, sandbox-lite, macro extract, ssdeep similarity, live URL VT lookup). On a single Render web service, the worker runs inline automatically.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse or Deep.</div>`;
+ return `<div class="info-box"><b>Static &amp; Deep Analysis</b><div class="small"><b>Analyse</b> = fast static RE, disassembly, de-obfuscation, verdict. <b>Deep</b> = separate investigation: execution chain reconstruction, PE import risk, MalwareBazaar/ThreatFox, live URL VT checks, YARA, similarity, attack chain — goes beyond static.</div></div><div id="staticTableHost"><div class="small">Load a completed job to see files…</div></div><h3 class="subhead">Report</h3><div id="staticDetail" class="detailpane">Select a file and click Analyse or Deep.</div>`;
 }
 async function runStaticAnalysis(sha256, btn, force=false){
  if(!currentJobId)return alert('Run a completed analysis job first');

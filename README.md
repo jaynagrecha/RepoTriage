@@ -4,6 +4,12 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.2 — Deep analysis distinct from static
+
+- **Deep** no longer duplicates the static RE report — it adds execution chain reconstruction, PE import risk, MalwareBazaar/ThreatFox file intel, attack chain, and "exclusive findings" static missed
+- Deep UI is a separate blue-themed investigation report with reconstructed commands, kill chain, and CTI cards
+- Run **Analyse** first for static RE; **Deep** for investigation layer (or Deep alone — it references static if cached)
+
 ### v4.0.0-alpha.1 — Platform foundation (Render web + worker)
 
 **Deep analysis pipeline** (Render worker service or `WORKER_INLINE=true` for single-service dev):
