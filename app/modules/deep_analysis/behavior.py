@@ -497,6 +497,16 @@ def _merge_behavior_with_semantic(
     })
     sem_bullets = list(semantic.get('what_it_does') or [])
     profile_bullets = [b for b in (profile_behavior.get('what_it_does') or []) if b not in sem_bullets]
+    sem_class = semantic.get('behavior_class') or ''
+    if profile_id in {'unknown_script', 'unknown_binary'} and (
+        semantic.get('purpose_rule_id')
+        or sem_class in {'config_metadata', 'shellcode_tool', 'linux_privesc_enum', 'metasploit_module'}
+        or (has_summary and sem_bullets)
+    ):
+        profile_bullets = [
+            b for b in profile_bullets
+            if 'No strong behavioral template matched' not in b
+        ]
     merged['what_it_does'] = sem_bullets + profile_bullets[:2]
     merged['evidence'] = sem_bullets[:6] or profile_behavior.get('evidence')
     caps = semantic.get('capabilities') or []

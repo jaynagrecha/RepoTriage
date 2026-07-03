@@ -241,6 +241,22 @@ def build_purpose_rules() -> list[PurposeRule]:
         _mk('unit_test_rule', 'test_harness', 'Unit test harness', 'unknown', {'unit_test_code'}, {'library_module'}),
         _mk('build_script_rule', 'build_automation', 'Build/CI script', 'unknown', {'build_script'}, {'subprocess_exec'}),
         _mk('data_etl_rule', 'data_tool', 'ETL data pipeline', 'unknown', {'data_etl'}, {'file_read', 'database_access'}),
+        _mk('idea_module_config', 'config_metadata', 'IntelliJ IDEA module descriptor', 'unknown',
+            {'idea_module_descriptor', 'config_file_only'},
+            forbids={'network_http', 'subprocess_exec', 'dynamic_exec', 'download_remote'},
+            summary='IntelliJ IDEA `.iml` module metadata — defines source roots and library dependencies, not executable code.',
+            effect='IDE module configuration (Java/Maven project layout and dependencies).',
+            action='Safe to review statically. Not executable outside the IDE/build tool.'),
+        _mk('xml_config_document', 'config_metadata', 'XML configuration document', 'unknown',
+            {'xml_config_document', 'config_file_only'},
+            forbids={'network_http', 'subprocess_exec', 'dynamic_exec', 'download_remote'},
+            summary='XML configuration or project metadata — no executable script logic detected.',
+            effect='Structured XML configuration consumed by tools or build systems.'),
+        _mk('structured_config_file', 'config_metadata', 'Structured configuration file', 'unknown',
+            {'config_file_only'},
+            forbids={'network_http', 'subprocess_exec', 'dynamic_exec', 'download_remote'},
+            summary='Configuration or data file with minimal executable logic.',
+            effect='Settings, metadata, or data — not a runnable script.'),
     ]
 
     seen: set[str] = set()
