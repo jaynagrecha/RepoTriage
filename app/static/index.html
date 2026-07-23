@@ -51,6 +51,11 @@
     html{-webkit-text-size-adjust:100%}
     body{overflow-x:hidden}
     .tablewrap{-webkit-overflow-scrolling:touch}
+
+    .handoff-banner{display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border-radius:14px;border:1px solid rgba(66,232,180,.28);background:linear-gradient(90deg,rgba(66,232,180,.10),rgba(92,183,255,.06));color:var(--muted);font-size:13px}
+    .handoff-banner.show{display:flex}
+    .handoff-banner b{color:var(--accent)}
+    .handoff-banner .dismiss{margin-left:auto;background:#0b2430;color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-weight:700;cursor:pointer}
     @media(max-width:1000px){
       .cards{grid-template-columns:repeat(2,1fr)}
       .inputrow,.grid2,.root-card{grid-template-columns:1fr}
@@ -98,6 +103,7 @@
 <body>
   <div class="wrap">
     <div class="hero"><div class="brand"><h1>RepoTriage</h1><p>Payload Intelligence Platform — GitHub or GitLab file URL → hashes, enrichment, extraction, IOCs, MITRE and CTI summary.</p></div><div class="pill">v4 alpha</div></div>
+    <div id="handoffBanner" class="handoff-banner" role="status"><span><b>Opened from RepoTrace</b> — file URL prefilled; analysis starts automatically when requested.</span><button type="button" class="dismiss" onclick="this.parentElement.classList.remove('show')">Dismiss</button></div>
     <div class="panel"><div class="inputrow"><input id="fileUrl" placeholder="Paste GitHub or GitLab file URL (blob/raw)"/><button id="analyzeBtn" onclick="analyze()">Analyze</button></div><div class="small">Submit a GitHub or GitLab file URL for server-side analysis. Private GitLab repos require GITLAB_TOKEN on the backend. The browser receives metadata and CTI results only — never sample bytes.</div><div id="usage" class="usagebar"></div><div id="status" class="status"></div></div>
     <div id="results" style="display:none">
       <div class="cards" id="cards"></div>
@@ -725,5 +731,30 @@ if(t==='MITRE ATT&CK')return mitreHtml(j);
 if(t==='Attack Narrative')return attackNarrativeHtml(j);
 if(t==='Executive Summary')return `<pre>${esc(j.summary)}</pre>`;
 return `<pre>${esc(JSON.stringify(j,null,2))}</pre>`}
+
+function consumeDeepLink(){
+  const params=new URLSearchParams(window.location.search);
+  const url=(params.get('url')||params.get('file_url')||'').trim();
+  const auto=['1','true','yes'].includes(String(params.get('auto')||'').toLowerCase());
+  const src=(params.get('src')||'').toLowerCase();
+  if(!url && !src) return;
+  if(url){
+    const input=document.getElementById('fileUrl');
+    if(input) input.value=url;
+  }
+  if(src==='repotrace'){
+    document.getElementById('handoffBanner')?.classList.add('show');
+  }
+  // Clean query so refresh/share does not re-fire auto-submit
+  try{
+    const clean=window.location.pathname+(window.location.hash||'');
+    history.replaceState({},'',clean||'/');
+  }catch(_){}
+  if(url && auto){
+    // Defer so the input value is painted and usage bar can settle
+    setTimeout(()=>{analyze().catch(()=>{});}, 60);
+  }
+}
+consumeDeepLink();
 </script>
 </body></html>
