@@ -37,8 +37,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.18'
-PLATFORM_VERSION = '4.0.0-alpha.18'
+APP_VERSION = '4.0.0-alpha.19'
+PLATFORM_VERSION = '4.0.0-alpha.19'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -198,10 +198,17 @@ def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
     family = (vt.get('family') or {}).get('name', 'Unknown')
     malicious = vt.get('malicious', 0)
     suspicious = vt.get('suspicious', 0)
-    if vt.get('status') == 'not_configured':
+    status = vt.get('status')
+    if status == 'not_configured':
         vt_line = 'VirusTotal enrichment was skipped because VT_API_KEY is not configured.'
-    elif vt.get('status') == 'not_found':
+    elif status == 'not_found':
         vt_line = 'VirusTotal does not currently have a report for this file hash.'
+    elif status == 'rate_limited':
+        vt_line = vt.get('message') or 'VirusTotal enrichment was skipped due to API rate limiting.'
+    elif status == 'auth_error':
+        vt_line = vt.get('message') or 'VirusTotal enrichment was skipped because VT_API_KEY was rejected.'
+    elif status == 'error':
+        vt_line = vt.get('message') or 'VirusTotal enrichment failed; continuing without VT verdict.'
     else:
         vt_line = f"VirusTotal verdict: {verdict} ({malicious} malicious / {suspicious} suspicious)."
     return (
@@ -830,14 +837,16 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
         ioc_total = sum(len(v) for k, v in merged_iocs.items() if k != 'ioc_details')
         now = datetime.now(timezone.utc).isoformat()
 
-        vt_configured = vt_result.get('status') not in {'not_configured'}
+        vt_configured = vt_result.get('status') not in {'not_configured', None}
+        vt_lookup_ok = vt_result.get('status') in {'found', 'not_found'}
         children_vt_done = extracted_count > 0 and vt_configured and any(
             x.get('vt_verdict') is not None for x in inventory[1:]
         )
         pipeline = {
             'downloaded': True,
             'hashed': True,
-            'vt_lookup': vt_configured,
+            'vt_lookup': vt_lookup_ok,
+            'vt_status': vt_result.get('status'),
             'archive_extraction': bool(extraction.get('root_is_archive')),
             'children_hashed': extracted_count > 0,
             'children_vt_lookup': children_vt_done,

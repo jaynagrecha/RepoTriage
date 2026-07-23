@@ -129,13 +129,14 @@ def _normalize_file_report(sha256: str, data: dict, cache_hit: bool = False) -> 
 async def lookup_file_hash(sha256: str, base_dir: Path, force_refresh: bool = False) -> dict:
     key = sha256.lower().strip()
     api_key = os.getenv("VT_API_KEY", "").strip()
+    permalink = f"https://www.virustotal.com/gui/file/{key}"
     if not api_key:
         return {
             "status": "not_configured",
             "sha256": key,
             "verdict": "unknown",
             "message": "VT_API_KEY is not configured",
-            "permalink": f"https://www.virustotal.com/gui/file/{key}",
+            "permalink": permalink,
         }
 
     cache = _load_cache(base_dir)
@@ -147,8 +148,20 @@ async def lookup_file_hash(sha256: str, base_dir: Path, force_refresh: bool = Fa
 
     url = f"https://www.virustotal.com/api/v3/files/{key}"
     headers = {"x-apikey": api_key}
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers=headers)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        return {
+            "status": "error",
+            "sha256": key,
+            "verdict": "unknown",
+            "malicious": 0,
+            "suspicious": 0,
+            "permalink": permalink,
+            "message": f"VirusTotal request failed: {exc.__class__.__name__}",
+            "queried_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     if resp.status_code == 404:
         result = {
@@ -157,19 +170,56 @@ async def lookup_file_hash(sha256: str, base_dir: Path, force_refresh: bool = Fa
             "verdict": "unknown/not in VT",
             "malicious": 0,
             "suspicious": 0,
-            "permalink": f"https://www.virustotal.com/gui/file/{key}",
+            "permalink": permalink,
             "queried_at": datetime.now(timezone.utc).isoformat(),
         }
         cache[key] = result
         _save_cache(base_dir, cache)
         return result
 
-    if resp.status_code == 401 or resp.status_code == 403:
-        raise VTLookupError("VirusTotal API rejected the configured VT_API_KEY")
+    if resp.status_code in {401, 403}:
+        return {
+            "status": "auth_error",
+            "sha256": key,
+            "verdict": "unknown",
+            "malicious": 0,
+            "suspicious": 0,
+            "permalink": permalink,
+            "message": "VirusTotal API rejected the configured VT_API_KEY",
+            "http": resp.status_code,
+            "queried_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     if resp.status_code == 429:
-        raise VTLookupError("VirusTotal API rate limit reached")
+        retry_after = (resp.headers.get("Retry-After") or "").strip()
+        message = "VirusTotal API rate limit reached"
+        if retry_after:
+            message = f"{message} (retry after {retry_after}s)"
+        return {
+            "status": "rate_limited",
+            "sha256": key,
+            "verdict": "unknown",
+            "malicious": 0,
+            "suspicious": 0,
+            "permalink": permalink,
+            "message": message,
+            "http": 429,
+            "retry_after": retry_after or None,
+            "queried_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     if resp.status_code >= 400:
-        raise VTLookupError(f"VirusTotal API error: HTTP {resp.status_code}")
+        return {
+            "status": "error",
+            "sha256": key,
+            "verdict": "unknown",
+            "malicious": 0,
+            "suspicious": 0,
+            "permalink": permalink,
+            "message": f"VirusTotal API error: HTTP {resp.status_code}",
+            "http": resp.status_code,
+            "queried_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     normalized = _normalize_file_report(key, resp.json(), cache_hit=False)
     normalized["queried_at"] = datetime.now(timezone.utc).isoformat()
