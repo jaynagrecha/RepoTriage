@@ -28,6 +28,10 @@ services:
         value: gpt-4o-mini
       - key: OPENAI_API_KEY
         sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITLAB_TOKEN
+        sync: false
     disk:
       name: repotriage-data
       mountPath: /var/data
@@ -50,6 +54,10 @@ services:
       - key: OPENAI_MODEL
         value: gpt-4o-mini
       - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITLAB_TOKEN
         sync: false
     disk:
       name: repotriage-data

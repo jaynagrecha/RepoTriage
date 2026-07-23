@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, quote
 import os, re, uuid
 import httpx
 
@@ -11,6 +11,7 @@ class DownloadError(Exception):
 ALLOWED_DOWNLOAD_HOSTS = frozenset({
     'github.com',
     'www.github.com',
+    'api.github.com',
     'raw.githubusercontent.com',
     'objects.githubusercontent.com',
     'codeload.github.com',
@@ -217,13 +218,91 @@ def normalize_file_url(url: str) -> dict:
     return normalize_github_file_url(url)
 
 
-def _download_headers(meta: dict) -> dict[str, str]:
-    if meta.get('provider') != 'gitlab':
-        return {}
-    token = (os.getenv('GITLAB_TOKEN') or '').strip()
-    if not token:
-        return {}
-    return {'PRIVATE-TOKEN': token}
+def _github_token() -> str:
+    return (os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN') or '').strip()
+
+
+def _gitlab_token() -> str:
+    return (os.getenv('GITLAB_TOKEN') or '').strip()
+
+
+def _github_contents_api_url(meta: dict) -> str | None:
+    """Build GitHub Contents API URL for blob/raw file metadata."""
+    owner = meta.get('owner')
+    repo = meta.get('repo')
+    path = meta.get('path')
+    if not owner or not repo or not path:
+        return None
+    if meta.get('source_type') == 'github_release_asset':
+        return None
+    encoded_path = quote(str(path), safe='/')
+    api_url = f'https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}'
+    branch = meta.get('branch')
+    if branch:
+        api_url += f'?ref={quote(str(branch), safe="")}'
+    return api_url
+
+
+def _download_headers(meta: dict, *, via_contents_api: bool = False) -> dict[str, str]:
+    provider = meta.get('provider')
+    if provider == 'gitlab':
+        token = _gitlab_token()
+        return {'PRIVATE-TOKEN': token} if token else {}
+    if provider == 'github':
+        headers: dict[str, str] = {'User-Agent': 'RepoTriage'}
+        if via_contents_api:
+            headers['Accept'] = 'application/vnd.github.raw'
+            headers['X-GitHub-Api-Version'] = '2022-11-28'
+        token = _github_token()
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
+        return headers
+    return {}
+
+
+def _resolve_download_target(meta: dict) -> tuple[str, dict[str, str], str]:
+    """
+    Choose download URL + headers.
+
+    Private GitHub repos require Contents API + GITHUB_TOKEN.
+    Public GitHub keeps raw.githubusercontent.com (no token needed).
+    """
+    if meta.get('provider') == 'github' and _github_token():
+        api_url = _github_contents_api_url(meta)
+        if api_url:
+            headers = _download_headers(meta, via_contents_api=True)
+            return api_url, headers, 'github_contents_api'
+    return meta['download_url'], _download_headers(meta), meta.get('source_type') or 'direct'
+
+
+def _http_error_message(meta: dict, status_code: int, *, via: str) -> str:
+    provider = meta.get('provider') or 'source'
+    if provider == 'gitlab':
+        if status_code == 401:
+            return 'GitLab download failed: HTTP 401 (private repo — set GITLAB_TOKEN)'
+        if status_code == 403:
+            return 'GitLab download failed: HTTP 403 (access denied — check GITLAB_TOKEN or permissions)'
+        return f'GitLab download failed: HTTP {status_code}'
+    if provider == 'github':
+        has_token = bool(_github_token())
+        if status_code == 401:
+            return 'GitHub download failed: HTTP 401 (set GITHUB_TOKEN with repo scope)'
+        if status_code == 403:
+            return 'GitHub download failed: HTTP 403 (token lacks access, or rate limited)'
+        if status_code == 404:
+            if not has_token:
+                return (
+                    'GitHub download failed: HTTP 404 '
+                    '(file missing, or private repo — set GITHUB_TOKEN)'
+                )
+            return (
+                'GitHub download failed: HTTP 404 '
+                '(file missing, wrong ref, or token cannot access this repo)'
+            )
+        if via == 'github_contents_api':
+            return f'GitHub Contents API failed: HTTP {status_code}'
+        return f'GitHub download failed: HTTP {status_code}'
+    return f'Download failed: HTTP {status_code}'
 
 
 def safe_filename(name: str) -> str:
@@ -239,21 +318,17 @@ async def download_file(url: str, out_dir: str | Path = 'downloads', max_bytes: 
     filename = safe_filename(meta.get('path') or 'sample.bin')
     out_path = out_dir / f'{uuid.uuid4().hex}_{filename}'
 
+    download_url, headers, via = _resolve_download_target(meta)
     source_host = urlparse(meta['display_url']).netloc.lower().split(':', 1)[0]
-    headers = _download_headers(meta)
     downloaded = 0
     async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
-        async with client.stream('GET', meta['download_url'], headers=headers) as resp:
+        async with client.stream('GET', download_url, headers=headers) as resp:
             final_host = urlparse(str(resp.url)).netloc.lower().split(':', 1)[0]
             if not _allowed_download_host(final_host, source_host=source_host):
                 provider = meta.get('provider') or 'source'
                 raise DownloadError(f'Download blocked: redirect left allowed {provider} hosts ({final_host})')
-            if resp.status_code == 401:
-                raise DownloadError('GitLab download failed: HTTP 401 (private repo — set GITLAB_TOKEN)')
-            if resp.status_code == 403:
-                raise DownloadError('GitLab download failed: HTTP 403 (access denied — check GITLAB_TOKEN or permissions)')
             if resp.status_code >= 400:
-                raise DownloadError(f'Download failed: HTTP {resp.status_code}')
+                raise DownloadError(_http_error_message(meta, resp.status_code, via=via))
             with out_path.open('wb') as f:
                 async for chunk in resp.aiter_bytes(1024 * 256):
                     downloaded += len(chunk)
@@ -264,5 +339,11 @@ async def download_file(url: str, out_dir: str | Path = 'downloads', max_bytes: 
                             pass
                         raise DownloadError(f'File exceeds safety limit of {max_bytes} bytes')
                     f.write(chunk)
-    meta.update({'local_path': str(out_path), 'filename': filename, 'downloaded_bytes': downloaded})
+    meta.update({
+        'local_path': str(out_path),
+        'filename': filename,
+        'downloaded_bytes': downloaded,
+        'download_via': via,
+        'resolved_download_url': download_url if via != 'github_contents_api' else download_url.split('?', 1)[0],
+    })
     return meta

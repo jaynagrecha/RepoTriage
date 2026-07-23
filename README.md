@@ -92,6 +92,18 @@ MAX_CACHED_FILE_BYTES=50000000
 
 **Production note:** Install `radare2` on the worker for deepest disassembly/decompilation. Without r2, PE/ELF analysis falls back to Capstone + pefile.
 
+### v4.0.0-alpha.18 — Private GitHub via Contents API
+
+- Optional `GITHUB_TOKEN` (or `GH_TOKEN`) for private GitHub blob/raw URLs.
+- When set, downloads use the GitHub Contents API (`Accept: application/vnd.github.raw`) instead of anonymous raw.githubusercontent.com.
+- Clearer 401/403/404 messages when the token is missing or cannot access the repo.
+
+**New environment variables**
+
+```env
+GITHUB_TOKEN=
+```
+
 ### v2.2B.4 — GitLab file URL support
 
 - Accept GitLab blob and raw file URLs (`/-/blob/` and `/-/raw/` paths), including nested group projects.

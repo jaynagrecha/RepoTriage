@@ -43,6 +43,7 @@ class TestDownloaderHosts(unittest.TestCase):
     def test_github_hosts_allowed(self):
         self.assertTrue(_allowed_download_host('raw.githubusercontent.com'))
         self.assertTrue(_allowed_download_host('objects.githubusercontent.com'))
+        self.assertTrue(_allowed_download_host('api.github.com'))
         self.assertFalse(_allowed_download_host('evil.example.com'))
 
     def test_gitlab_hosts_allowed(self):
