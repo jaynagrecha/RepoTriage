@@ -8,12 +8,24 @@ from typing import Any
 
 from ..config import RepoHuntConfig
 from ..types import Finding
+from .email_templates import (
+    finding_card_html,
+    render_hunt_findings_html,
+    render_wu_alert_html,
+    render_wu_alert_text,
+)
 
 
 def _rule_summary(findings: list[Finding]) -> str:
     counts = Counter((f.detection.rule or 'unknown') for f in findings)
     parts = [f'{rule}×{n}' for rule, n in counts.most_common()]
     return ', '.join(parts) if parts else 'findings'
+
+
+def _attach_multipart(msg: EmailMessage, text_body: str, html_body: str) -> EmailMessage:
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype='html')
+    return msg
 
 
 def build_findings_email(findings: list[Finding], cfg: RepoHuntConfig, *, run_meta: dict[str, Any]) -> EmailMessage:
@@ -36,13 +48,16 @@ def build_findings_email(findings: list[Finding], cfg: RepoHuntConfig, *, run_me
         '  - DETECT_GTI_MaliciousFilesWithWUKeywords (WU/MTCN filename + VT malicious>0)',
         '',
     ]
-    for i, f in enumerate(findings[: cfg.max_findings_email], 1):
+    cards: list[str] = []
+    shown = findings[: cfg.max_findings_email]
+    for i, f in enumerate(shown, 1):
         c = f.candidate
         vt = f.detection.vt_confirm or {}
+        url = c.html_url or c.url or ''
         lines.extend([
             f'{i}. [{f.detection.rule}] {c.repo or "-"} :: {c.path or f.filename or c.url}',
             f'   source: {c.source}',
-            f'   url: {c.html_url or c.url}',
+            f'   url: {url}',
             f'   filename: {f.filename}',
             f'   sha256: {f.sha256}',
             f'   size: {f.detection.filesize} bytes',
@@ -52,10 +67,38 @@ def build_findings_email(findings: list[Finding], cfg: RepoHuntConfig, *, run_me
             f'   triage: {f.triage_url or "(set REPOTRIAGE_PUBLIC_URL)"}',
             '',
         ])
+        cards.append(
+            finding_card_html(
+                index=i,
+                rule=f.detection.rule or 'unknown',
+                repo=c.repo or '',
+                path=c.path or f.filename or '',
+                source=c.source or '',
+                url=url,
+                filename=f.filename or c.path or '',
+                sha256=f.sha256 or '',
+                filesize=f.detection.filesize,
+                matched=','.join(f.detection.matched_strings) or '-',
+                vt_status=vt.get('status'),
+                vt_verdict=vt.get('verdict'),
+                vt_malicious=vt.get('malicious'),
+                triage_url=f.triage_url or '',
+                livehunt=vt.get('livehunt_rule_id'),
+            )
+        )
+    truncated = ''
     if len(findings) > cfg.max_findings_email:
-        lines.append(f'…and {len(findings) - cfg.max_findings_email} more (truncated).')
-    msg.set_content('\n'.join(lines))
-    return msg
+        truncated = f'…and {len(findings) - cfg.max_findings_email} more (truncated).'
+        lines.append(truncated)
+
+    html_body = render_hunt_findings_html(
+        findings_count=len(findings),
+        summary=summary,
+        run_meta=run_meta,
+        cards_html=''.join(cards),
+        truncated_note=truncated,
+    )
+    return _attach_multipart(msg, '\n'.join(lines), html_body)
 
 
 def build_analysis_wu_alert_email(
@@ -70,10 +113,16 @@ def build_analysis_wu_alert_email(
     """WU/MTCN alert — used by manual Analyze and the 5-minute scheduled scan."""
     msg = EmailMessage()
     mode = (scan_mode or 'analyze').strip().lower()
+    rule_id = cfg.vt_livehunt_wu_rule_id or '20744291635'
     if mode in {'scheduled', 'hunt', 'loop', 'worker'}:
         msg['Subject'] = (
             f'[RepoTriage WU/MTCN] {len(hits)} hit(s) '
             f'(DETECT_GTI_MaliciousFilesWithWUKeywords · scheduled scan)'
+        )
+        title = 'WU/MTCN scheduled scan hit'
+        subtitle = (
+            'Scheduled WU/MTCN scan (every REPO_HUNT_INTERVAL_SECONDS) — '
+            'email sent only when a hit is found.'
         )
         header = (
             'RepoTriage scheduled WU/MTCN scan (every REPO_HUNT_INTERVAL_SECONDS) — '
@@ -84,34 +133,32 @@ def build_analysis_wu_alert_email(
             f'[RepoTriage Analyze] WU/MTCN LiveHunt hit(s): {len(hits)} '
             f'(DETECT_GTI_MaliciousFilesWithWUKeywords)'
         )
+        title = 'WU/MTCN analysis alert'
+        subtitle = 'Western Union / MTCN malicious filename rule matched during Analyze'
         header = 'RepoTriage analysis alert — Western Union / MTCN malicious filename rule'
     msg['From'] = cfg.smtp_from
     msg['To'] = cfg.smtp_to
-    lines = [
-        header,
-        f'LiveHunt rule: DETECT_GTI_MaliciousFilesWithWUKeywords '
-        f'(id {cfg.vt_livehunt_wu_rule_id or "20744291635"})',
-        f'Mode: {mode}',
-        f'Job: {job_id or "-"}',
-        f'Source: {source_url}',
-        f'Triage: {triage_url or cfg.triage_base_url or "-"}',
-        '',
-    ]
-    for i, hit in enumerate(hits, 1):
-        lines.extend([
-            f'{i}. {hit.get("filename") or hit.get("path") or "-"}',
-            f'   url: {hit.get("url") or source_url or "-"}',
-            f'   sha256: {hit.get("sha256")}',
-            f'   matched: {",".join(hit.get("matched_keywords") or [])}',
-            f'   vt: verdict={hit.get("vt_verdict")} malicious={hit.get("vt_malicious")} '
-            f'label={hit.get("popular_threat_label") or "-"}',
-            f'   families: {",".join(hit.get("family_labels") or []) or "-"}',
-            f'   vt link: {hit.get("vt_link") or "-"}',
-            f'   triage: {hit.get("triage_url") or triage_url or "-"}',
-            '',
-        ])
-    msg.set_content('\n'.join(lines))
-    return msg
+
+    text_body = render_wu_alert_text(
+        header=header,
+        mode=mode,
+        job_id=job_id,
+        source_url=source_url,
+        triage_url=triage_url or cfg.triage_base_url or '',
+        rule_id=str(rule_id),
+        hits=hits,
+    )
+    html_body = render_wu_alert_html(
+        title=title,
+        subtitle=subtitle,
+        mode=mode,
+        job_id=job_id,
+        source_url=source_url,
+        triage_url=triage_url or cfg.triage_base_url or '',
+        rule_id=str(rule_id),
+        hits=hits,
+    )
+    return _attach_multipart(msg, text_body, html_body)
 
 
 def send_email(msg: EmailMessage, cfg: RepoHuntConfig) -> dict[str, Any]:
@@ -132,6 +179,11 @@ def send_email(msg: EmailMessage, cfg: RepoHuntConfig) -> dict[str, Any]:
                 if cfg.smtp_user:
                     smtp.login(cfg.smtp_user, cfg.smtp_password)
                 smtp.send_message(msg)
-        return {'ok': True, 'to': cfg.smtp_to, 'subject': msg['Subject']}
+        return {
+            'ok': True,
+            'to': cfg.smtp_to,
+            'subject': msg['Subject'],
+            'format': 'multipart/alternative' if msg.is_multipart() else 'text/plain',
+        }
     except Exception as exc:
         return {'ok': False, 'error': f'{exc.__class__.__name__}: {exc}'}

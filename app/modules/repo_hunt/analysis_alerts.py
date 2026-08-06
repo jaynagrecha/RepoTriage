@@ -74,6 +74,7 @@ def collect_wu_hits_from_analysis(result: dict[str, Any]) -> list[dict[str, Any]
             'rule': RULE_ID,
             'filename': item.get('filename') or item.get('path'),
             'path': item.get('path'),
+            'url': source.get('display_url') or source.get('download_url') or source.get('html_url'),
             'sha256': item.get('sha256'),
             'matched_keywords': list(hit.matched_strings),
             'vt_verdict': vt_report.get('verdict'),
