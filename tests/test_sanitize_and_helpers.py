@@ -57,6 +57,8 @@ class TestGitLabUrlNormalization(unittest.TestCase):
         meta = normalize_gitlab_file_url(url)
         self.assertEqual(meta['provider'], 'gitlab')
         self.assertEqual(meta['project'], 'acme/security/tools')
+        self.assertEqual(meta['owner'], 'acme/security')
+        self.assertEqual(meta['repo'], 'tools')
         self.assertEqual(meta['ref'], 'main')
         self.assertEqual(meta['path'], 'samples/payload.zip')
         self.assertEqual(

@@ -28,9 +28,20 @@ def _uniq(seq):
 def _family_candidates(result: dict) -> list[dict]:
     c = []
     anchors = count_exact_cti_anchors(result)
-    vt_fam = ((result.get('vt') or {}).get('family') or {}).get('name')
-    if vt_fam and str(vt_fam).lower() not in {'unknown', 'none', ''} and anchors.get('vt_malicious'):
-        c.append({'family': vt_fam, 'source': 'VirusTotal', 'confidence': (result.get('family') or {}).get('confidence', 0)})
+    vt = result.get('vt') or {}
+    vt_family = vt.get('family') if isinstance(vt.get('family'), dict) else {}
+    if anchors.get('vt_malicious'):
+        popular = vt.get('popular_threat_label') or vt_family.get('popular_threat_label')
+        primary = vt_family.get('primary_family') or vt_family.get('name')
+        labels = vt.get('family_labels') or vt_family.get('family_labels') or []
+        conf = vt_family.get('confidence', 0) or (result.get('family') or {}).get('confidence', 0)
+        if popular and str(popular).lower() not in {'unknown', 'none', ''}:
+            c.append({'family': popular, 'source': 'VirusTotal', 'confidence': max(int(conf or 0), 85)})
+        if primary and str(primary).lower() not in {'unknown', 'none', ''}:
+            c.append({'family': primary, 'source': 'VirusTotal', 'confidence': conf})
+        for label in labels:
+            if label and str(label).lower() not in {'unknown', 'none', ''}:
+                c.append({'family': label, 'source': 'VirusTotal', 'confidence': conf or 70})
 
     ti = result.get('threat_intel') or {}
     mb = (ti.get('malwarebazaar') or {}).get('results') or []

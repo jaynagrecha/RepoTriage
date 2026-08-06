@@ -70,6 +70,16 @@ def _split_gitlab_ref_and_path(segments: list[str]) -> tuple[str, str]:
     return ref, file_path
 
 
+def _gitlab_owner_repo(project_path: str) -> tuple[str, str]:
+    """Split GitLab project path into owner (group/namespace) + repo (last segment)."""
+    parts = [p for p in (project_path or '').split('/') if p]
+    if not parts:
+        return '', ''
+    if len(parts) == 1:
+        return '', parts[0]
+    return '/'.join(parts[:-1]), parts[-1]
+
+
 def _gitlab_raw_url(host: str, project_path: str, ref: str, file_path: str) -> str:
     scheme = 'https'
     custom = (os.getenv('GITLAB_BASE_URL') or '').strip().rstrip('/')
@@ -106,12 +116,15 @@ def normalize_gitlab_file_url(url: str) -> dict:
     ref, file_path = _split_gitlab_ref_and_path([part for part in rest.strip('/').split('/') if part])
     raw_url = _gitlab_raw_url(host, project_path, ref, file_path)
     source_type = 'gitlab_blob' if marker == _GITLAB_BLOB_MARKER else 'gitlab_raw'
+    owner, repo = _gitlab_owner_repo(project_path)
 
     return {
         'provider': 'gitlab',
         'source_type': source_type,
         'host': host,
         'project': project_path,
+        'owner': owner,
+        'repo': repo,
         'ref': ref,
         'branch': ref,
         'path': file_path,

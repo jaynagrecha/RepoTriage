@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.24 — VT labels, original names, contacted infra, GitLab owner/repo
+
+- VirusTotal **popular threat label**, **family labels**, and **threat categories** shown on Overview + VirusTotal tabs
+- Display VT **meaningful / original / alternate filenames** (e.g. `sleestakk_payload_1.js`) alongside archive member names
+- Pull VT relationship **contacted_domains / contacted_ips / contacted_urls** into IOCs and Infrastructure (probable C2)
+- GitLab URL normalization now sets **owner** + **repo** (no more Overview `Owner / Repo` = `/`)
+
 ### v4.0.0-alpha.2 — Deep analysis distinct from static
 
 - **Deep** no longer duplicates the static RE report — it adds execution chain reconstruction, PE import risk, MalwareBazaar/ThreatFox file intel, attack chain, and "exclusive findings" static missed

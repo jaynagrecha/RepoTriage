@@ -39,8 +39,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.23'
-PLATFORM_VERSION = '4.0.0-alpha.23'
+APP_VERSION = '4.0.0-alpha.24'
+PLATFORM_VERSION = '4.0.0-alpha.24'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -198,6 +198,8 @@ class AnalyzeRequest(BaseModel):
 def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
     verdict = vt.get('verdict', 'unknown')
     family = (vt.get('family') or {}).get('name', 'Unknown')
+    popular = vt.get('popular_threat_label') or (vt.get('family') or {}).get('popular_threat_label')
+    family_labels = vt.get('family_labels') or (vt.get('family') or {}).get('family_labels') or []
     malicious = vt.get('malicious', 0)
     suspicious = vt.get('suspicious', 0)
     status = vt.get('status')
@@ -213,16 +215,190 @@ def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
         vt_line = vt.get('message') or 'VirusTotal enrichment failed; continuing without VT verdict.'
     else:
         vt_line = f"VirusTotal verdict: {verdict} ({malicious} malicious / {suspicious} suspicious)."
+    family_line = f"Family/label: {family}."
+    if popular:
+        family_line += f" Popular threat label: {popular}."
+    if family_labels:
+        family_line += f" Family labels: {', '.join(family_labels)}."
+    names = vt.get('names') or []
+    name_line = ''
+    if vt.get('original_filename') or names:
+        shown = vt.get('original_filename') or names[0]
+        extras = [n for n in names if n and n != shown][:5]
+        name_line = f"\nVT original name: {shown}."
+        if extras:
+            name_line += f" Also known as: {', '.join(extras)}."
+    contacts = []
+    contacts.extend(vt.get('contacted_domains') or [])
+    contacts.extend(vt.get('contacted_ips') or [])
+    contacts.extend((vt.get('contacted_urls') or [])[:5])
+    contact_line = ''
+    if contacts:
+        contact_line = f"\nVT contacted infrastructure: {', '.join(contacts[:12])}."
     return (
         f"RepoTriage {APP_VERSION} acquired the remote-hosted file and calculated MD5/SHA1/SHA256.\n\n"
         f"File: {meta.get('filename')}\n"
         f"Type: {file_type}\n"
         f"SHA256: {hashes.get('sha256')}\n\n"
         f"{vt_line}\n"
-        f"Family/label: {family}.\n\n"
+        f"{family_line}"
+        f"{name_line}"
+        f"{contact_line}\n\n"
         f"Archive extraction, IOC extraction, Abuse.ch CTI enrichment, MITRE ATT&CK mapping, and infrastructure classification are enabled in this build."
     )
 
+
+def _vt_inventory_fields(vt: dict | None) -> dict:
+    vt = vt if isinstance(vt, dict) else {}
+    family = vt.get('family') if isinstance(vt.get('family'), dict) else {}
+    return {
+        'vt_verdict': vt.get('verdict'),
+        'vt_malicious': vt.get('malicious'),
+        'vt_suspicious': vt.get('suspicious'),
+        'vt_link': vt.get('permalink'),
+        'vt_names': list(vt.get('names') or []),
+        'vt_meaningful_name': vt.get('meaningful_name'),
+        'vt_original_filename': vt.get('original_filename'),
+        'vt_popular_threat_label': vt.get('popular_threat_label') or family.get('popular_threat_label'),
+        'vt_family_labels': list(vt.get('family_labels') or family.get('family_labels') or []),
+        'vt_threat_categories': list(vt.get('threat_categories') or family.get('threat_categories') or []),
+        'vt_contacted_domains': list(vt.get('contacted_domains') or []),
+        'vt_contacted_ips': list(vt.get('contacted_ips') or []),
+        'vt_contacted_urls': list(vt.get('contacted_urls') or []),
+    }
+
+
+def merge_vt_contacts_into_iocs(iocs: dict, vt_reports: list[dict]) -> dict:
+    """Fold VirusTotal contacted_* relationships into merged IOC buckets."""
+    from urllib.parse import urlparse
+
+    merged = dict(iocs or {})
+    for key in ('urls', 'domains', 'ips', 'emails', 'discord_webhooks', 'telegram', 'wallets'):
+        merged.setdefault(key, [])
+    details = dict(merged.get('ioc_details') or {})
+    domain_details = {str(r.get('indicator', '')).lower(): r for r in (details.get('domains') or []) if isinstance(r, dict)}
+    ip_details = {str(r.get('indicator', '')).lower(): r for r in (details.get('ips') or []) if isinstance(r, dict)}
+    url_details = {str(r.get('indicator', '')).lower(): r for r in (details.get('urls') or []) if isinstance(r, dict)}
+
+    def _note(bucket_map: dict, indicator: str, source: str) -> None:
+        key = indicator.lower()
+        if key in bucket_map:
+            srcs = bucket_map[key].setdefault('sources', [])
+            if source not in srcs:
+                srcs.append(source)
+            return
+        bucket_map[key] = {
+            'indicator': indicator,
+            'confidence': 'High',
+            'reason': 'VirusTotal sandbox/behavior relationship',
+            'sources': [source],
+        }
+
+    for report in vt_reports:
+        if not isinstance(report, dict) or report.get('status') != 'found':
+            continue
+        sha = (report.get('sha256') or '')[:12] or 'vt'
+        src = f'VirusTotal:{sha}'
+        for domain in report.get('contacted_domains') or []:
+            d = str(domain).strip().lower()
+            if not d:
+                continue
+            merged['domains'].append(d)
+            _note(domain_details, d, src)
+        for ip in report.get('contacted_ips') or []:
+            ip_s = str(ip).strip()
+            if not ip_s:
+                continue
+            merged['ips'].append(ip_s)
+            _note(ip_details, ip_s, src)
+        for url in report.get('contacted_urls') or []:
+            u = str(url).strip()
+            if not u:
+                continue
+            merged['urls'].append(u)
+            _note(url_details, u, src)
+            try:
+                host = (urlparse(u).hostname or '').lower()
+            except Exception:
+                host = ''
+            if host:
+                merged['domains'].append(host)
+                _note(domain_details, host, src)
+
+    def _uniq(seq: list) -> list:
+        out, seen = [], set()
+        for item in seq:
+            k = str(item).strip().lower()
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            out.append(item if not isinstance(item, str) else item.strip())
+        return out
+
+    for key in ('urls', 'domains', 'ips', 'emails', 'discord_webhooks', 'telegram', 'wallets'):
+        merged[key] = _uniq(merged.get(key) or [])
+    details['domains'] = list(domain_details.values())
+    details['ips'] = list(ip_details.values())
+    details['urls'] = list(url_details.values())
+    merged['ioc_details'] = details
+    return merged
+
+
+def integrate_vt_infrastructure(infra: dict, vt_reports: list[dict]) -> dict:
+    """Surface VT contacted domains/IPs/URLs as probable C2 / staging infrastructure."""
+    infra = dict(infra or {})
+    infra.setdefault('probable_c2', [])
+    seen = set()
+    for bucket, rows in list(infra.items()):
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    seen.add((bucket, str(row.get('indicator')).lower()))
+
+    for report in vt_reports:
+        if not isinstance(report, dict) or report.get('status') != 'found':
+            continue
+        permalink = report.get('permalink')
+        for domain in report.get('contacted_domains') or []:
+            indicator = str(domain).strip().lower()
+            key = ('probable_c2', indicator)
+            if not indicator or key in seen:
+                continue
+            seen.add(key)
+            infra['probable_c2'].append({
+                'indicator': indicator,
+                'type': 'VT Contacted Domain',
+                'confidence': 'High',
+                'source': 'VirusTotal',
+                'reference': permalink,
+            })
+        for ip in report.get('contacted_ips') or []:
+            indicator = str(ip).strip()
+            key = ('probable_c2', indicator.lower())
+            if not indicator or key in seen:
+                continue
+            seen.add(key)
+            infra['probable_c2'].append({
+                'indicator': indicator,
+                'type': 'VT Contacted IP',
+                'confidence': 'High',
+                'source': 'VirusTotal',
+                'reference': permalink,
+            })
+        for url in report.get('contacted_urls') or []:
+            indicator = str(url).strip()
+            key = ('probable_c2', indicator.lower())
+            if not indicator or key in seen:
+                continue
+            seen.add(key)
+            infra['probable_c2'].append({
+                'indicator': indicator,
+                'type': 'VT Contacted URL',
+                'confidence': 'Medium',
+                'source': 'VirusTotal',
+                'reference': permalink,
+            })
+    return infra
 
 
 def integrate_threatfox_infrastructure(infra: dict, threatfox: dict) -> dict:
@@ -804,7 +980,7 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
             'max_files': max_files,
         }
 
-        # Always include the GitHub-hosted root file first.
+        # Always include the GitHub/GitLab-hosted root file first.
         inventory = [{
             'filename': meta['filename'],
             'path': meta.get('path') or meta['filename'],
@@ -814,15 +990,13 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
             'md5': hashes.get('md5'),
             'sha1': hashes.get('sha1'),
             'sha256': hashes.get('sha256'),
-            'vt_verdict': vt_result.get('verdict'),
-            'vt_malicious': vt_result.get('malicious'),
-            'vt_suspicious': vt_result.get('suspicious'),
-            'vt_link': vt_result.get('permalink'),
             'parent_archive': None,
             'depth': 0,
             'is_archive': is_archive(meta['local_path']),
             'iocs': extract_iocs_from_file(meta['local_path']),
+            **_vt_inventory_fields(vt_result),
         }]
+        vt_reports: list[dict] = [vt_result]
 
         # If root file is an archive, extract it recursively and analyze every child file.
         if is_archive(meta['local_path']):
@@ -889,15 +1063,13 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
                         'md5': child_hashes.get('md5'),
                         'sha1': child_hashes.get('sha1'),
                         'sha256': child_hashes.get('sha256'),
-                        'vt_verdict': child_vt.get('verdict'),
-                        'vt_malicious': child_vt.get('malicious'),
-                        'vt_suspicious': child_vt.get('suspicious'),
-                        'vt_link': child_vt.get('permalink'),
                         'parent_archive': child.get('parent_archive'),
                         'depth': child.get('depth'),
                         'is_archive': child.get('is_archive'),
                         'iocs': child_iocs,
+                        **_vt_inventory_fields(child_vt),
                     })
+                    vt_reports.append(child_vt)
 
         malicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'malicious')
         suspicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'suspicious')
@@ -908,7 +1080,9 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
         extracted_count = max(0, len(inventory) - 1)
         ioc_sources = [{'path': x.get('path') or x.get('filename'), 'iocs': x.get('iocs') or {}} for x in inventory]
         merged_iocs = merge_iocs(ioc_sources)
+        merged_iocs = merge_vt_contacts_into_iocs(merged_iocs, vt_reports)
         infra = classify_infrastructure(merged_iocs)
+        infra = integrate_vt_infrastructure(infra, vt_reports)
         threatfox = await enrich_iocs(merged_iocs, BASE_DIR)
         malwarebazaar = await enrich_malwarebazaar(inventory, BASE_DIR)
         urlhaus = await enrich_urlhaus(merged_iocs, BASE_DIR)
@@ -974,7 +1148,14 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
 
         preliminary = {
             'source': meta,
-            'root_file': {'filename': meta['filename'], 'path': meta.get('path'), 'file_type': file_type, **hashes},
+            'root_file': {
+                'filename': meta['filename'],
+                'path': meta.get('path'),
+                'file_type': file_type,
+                'vt_original_filename': vt_result.get('original_filename'),
+                'vt_names': vt_result.get('names') or [],
+                **hashes,
+            },
             'vt': vt_result,
             'extraction': extraction,
             'file_stats': {
@@ -1023,6 +1204,8 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
                 'filename': meta['filename'],
                 'path': meta.get('path'),
                 'file_type': file_type,
+                'vt_original_filename': vt_result.get('original_filename'),
+                'vt_names': vt_result.get('names') or [],
                 **hashes,
             },
             'pipeline': pipeline,
