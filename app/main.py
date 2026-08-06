@@ -39,8 +39,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.22'
-PLATFORM_VERSION = '4.0.0-alpha.22'
+APP_VERSION = '4.0.0-alpha.23'
+PLATFORM_VERSION = '4.0.0-alpha.23'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -466,29 +466,6 @@ async def repo_hunt_ingest(req: RepoHuntIngestRequest, request: Request):
         'ingested_at': datetime.now(timezone.utc).isoformat(),
     })
     return {'ok': True, 'queued': True, 'url': req.url}
-
-
-@app.get('/api/admin/repo-hunt/run')
-async def repo_hunt_run_get_hint():
-    """Browsers issue GET; the real trigger is POST + admin header."""
-    return {
-        'ok': False,
-        'detail': 'Use POST, not GET (opening this URL in a browser always does GET).',
-        'how_to': {
-            'method': 'POST',
-            'url': '/api/admin/repo-hunt/run',
-            'headers': {
-                'x-admin-bypass-token': '<ADMIN_BYPASS_TOKEN from Render env>',
-                'Content-Type': 'application/json',
-            },
-            'optional_query': 'send=false for dry-run without email',
-            'status_url': 'GET /api/admin/repo-hunt/status (same admin header)',
-            'curl': (
-                "curl -X POST -H 'x-admin-bypass-token: $ADMIN_BYPASS_TOKEN' "
-                "'https://repotriage.onrender.com/api/admin/repo-hunt/run'"
-            ),
-        },
-    }
 
 
 @app.post('/api/admin/repo-hunt/run')
