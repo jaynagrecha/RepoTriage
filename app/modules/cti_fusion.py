@@ -722,9 +722,10 @@ def build_analyst_report(result: dict) -> dict:
         lines.append('## System Notes')
         for note in n.get('system_notes') or []:
             lines.append(f"- {note}")
-    md='\n'.join(lines)
-    html='<html><head><title>RepoTriage Analyst Report</title><style>body{font-family:Arial,sans-serif;max-width:1100px;margin:40px auto;line-height:1.55}code,pre{background:#f4f4f4;padding:4px}h1,h2{color:#123}</style></head><body>'+md.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('\n','<br>')+'</body></html>'
-    return {'markdown':md,'html':html}
+    md = '\n'.join(lines)
+    from .analyst_report_html import render_analyst_report_html
+    html = render_analyst_report_html(result)
+    return {'markdown': md, 'html': html, 'format': 'templated_html_v1'}
 
 def export_csv(result: dict) -> str:
     out=io.StringIO(); w=csv.writer(out)
