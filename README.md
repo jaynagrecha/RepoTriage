@@ -92,6 +92,13 @@ MAX_CACHED_FILE_BYTES=50000000
 
 **Production note:** Install `radare2` on the worker for deepest disassembly/decompilation. Without r2, PE/ELF analysis falls back to Capstone + pefile.
 
+### v4.0.0-alpha.20 — CTI live proof
+
+- Fixture + unit tests prove ThreatFox/URLHaus exact matches flow into Infrastructure (probable C2 / payload delivery).
+- Admin endpoint `GET /api/admin/cti-selftest` (header `x-admin-bypass-token`) pulls a fresh ThreatFox IOC with your `ABUSECH_API_KEY` and verifies an exact match.
+- CLI: `python scripts/cti_smoke_test.py`
+- Health now exposes `abusech_configured`.
+
 ### v4.0.0-alpha.18 — Private GitHub via Contents API
 
 - Optional `GITHUB_TOKEN` (or `GH_TOKEN`) for private GitHub blob/raw URLs.

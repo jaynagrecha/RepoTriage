@@ -25,7 +25,8 @@ from .modules.cti_query_policy import threatfox_match_is_exact
 from .modules.threatfox import enrich_iocs
 from .modules.malwarebazaar import enrich_files as enrich_malwarebazaar
 from .modules.urlhaus import enrich_iocs as enrich_urlhaus
-from .modules.abusech_connector import enrich_feodo, enrich_sslbl, abusech_summary
+from .modules.abusech_connector import enrich_feodo, enrich_sslbl, abusech_summary, abusech_key
+from .modules.cti_selftest import run_cti_selftest
 from .modules.mitre_mapper import map_mitre
 from .modules.narrative import generate_attack_narrative
 from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
@@ -37,8 +38,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.19'
-PLATFORM_VERSION = '4.0.0-alpha.19'
+APP_VERSION = '4.0.0-alpha.20'
+PLATFORM_VERSION = '4.0.0-alpha.20'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -386,6 +387,13 @@ def _cleanup_old_jobs() -> None:
         except Exception:
             continue
 
+def _require_admin(request: Request) -> None:
+    expected = (USAGE_LIMITER.admin_bypass_token or os.getenv('ADMIN_BYPASS_TOKEN') or '').strip()
+    provided = (request.headers.get('x-admin-bypass-token') or '').strip()
+    if not expected or provided != expected:
+        raise HTTPException(status_code=404, detail='Not found')
+
+
 @app.get('/api/health')
 async def health():
     return {
@@ -393,6 +401,7 @@ async def health():
         'app': 'RepoTriage',
         'version': APP_VERSION,
         'vt_configured': bool(os.getenv('VT_API_KEY')),
+        'abusech_configured': bool(abusech_key()),
         'analysis_mode': os.getenv('ANALYSIS_MODE', 'local_dev'),
         'server_analysis_mode': os.getenv('SERVER_ANALYSIS_MODE', 'false').lower() == 'true',
         'job_mode': True,
@@ -410,6 +419,15 @@ async def health():
         'semantic_llm_provider': os.getenv('SEMANTIC_LLM_PROVIDER', 'openai'),
         'semantic_llm_model': os.getenv('OPENAI_MODEL', os.getenv('ANTHROPIC_MODEL', 'gpt-4o-mini')),
     }
+
+
+@app.get('/api/admin/cti-selftest')
+async def cti_selftest(request: Request):
+    """Live Abuse.ch proof. Requires header x-admin-bypass-token = ADMIN_BYPASS_TOKEN."""
+    _require_admin(request)
+    report = await run_cti_selftest(BASE_DIR)
+    status = 200 if report.get('ok') else 503
+    return JSONResponse(report, status_code=status)
 
 
 async def _run_job(job_id: str, req: AnalyzeRequest) -> None:
