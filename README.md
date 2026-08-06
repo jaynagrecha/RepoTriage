@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.28 — 24/7 repo hunt worker
+
+- Hunt worker supports continuous loop mode (`REPO_HUNT_LOOP=true`)
+- Default cycle interval **5 minutes** (`REPO_HUNT_INTERVAL_SECONDS=300`)
+- Blueprint: `repotriage-repo-hunt` is now an always-on **worker** (not a 6-hour cron)
+- File lock prevents overlapping hunt cycles
+
 ### v4.0.0-alpha.27 — WU/MTCN LiveHunt + email alerts
 
 - Mirror VT LiveHunt `DETECT_GTI_MaliciousFilesWithWUKeywords` (WU/MTCN filename keywords + VT malicious > 0)
@@ -134,10 +141,20 @@ Automated discovery of new JS droppers matching your LiveHunt-style JsOutProx ru
 **Email**
 - SMTP (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `REPO_HUNT_TO_EMAIL`)
 
+**24/7 scanning**
+```env
+REPO_HUNT_ENABLED=true
+REPO_HUNT_LOOP=true
+REPO_HUNT_INTERVAL_SECONDS=300
+```
+
 **Run**
 ```bash
-# cron / one-shot
-python scripts/repo_hunt_worker.py
+# always-on worker (Render Background Worker / 24/7)
+REPO_HUNT_LOOP=true python scripts/repo_hunt_worker.py
+
+# one-shot (legacy cron)
+REPO_HUNT_LOOP=false python scripts/repo_hunt_worker.py
 
 # admin
 curl -X POST -H "x-admin-bypass-token: $ADMIN_BYPASS_TOKEN" \

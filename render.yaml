@@ -37,23 +37,28 @@ services:
       mountPath: /var/data
       sizeGB: 10
 
-  - type: cron
+  # Always-on 24/7 hunt worker (loops; default interval 5 minutes)
+  - type: worker
     name: repotriage-repo-hunt
     runtime: docker
     dockerCommand: python scripts/repo_hunt_worker.py
-    # every 6 hours
-    schedule: "0 */6 * * *"
     plan: starter
     envVars:
       - key: PLATFORM_DATA_DIR
         value: /var/data
       - key: REPO_HUNT_ENABLED
         value: "true"
+      - key: REPO_HUNT_LOOP
+        value: "true"
+      - key: REPO_HUNT_INTERVAL_SECONDS
+        value: "300"
       - key: GITHUB_TOKEN
         sync: false
       - key: VT_API_KEY
         sync: false
       - key: VT_LIVEHUNT_RULE_ID
+        sync: false
+      - key: VT_LIVEHUNT_WU_RULE_ID
         sync: false
       - key: SMTP_HOST
         sync: false
@@ -75,6 +80,8 @@ services:
         sync: false
       - key: REPOTRIAGE_PUBLIC_URL
         sync: false
+      - key: ANALYSIS_ALERT_EMAIL
+        value: "true"
     disk:
       name: repotriage-data
       mountPath: /var/data
