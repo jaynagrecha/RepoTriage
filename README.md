@@ -4,7 +4,22 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
-### v4.0.0-alpha.33 — HTML alert email templates
+### v4.0.0-alpha.33 — Templated Analyst Report HTML
+
+- Downloaded / exported Analyst Report HTML is a full RepoTriage template (not markdown→`<br>`)
+- Sections: risk cards, case metadata, narrative, malicious files, relations snapshot, infrastructure tables, MITRE, campaign/actor
+- Dual-extension badges, VT labels, print stylesheet; Analyst Report tab previews HTML in-page
+- `/api/jobs/{id}/report/html` rebuilds legacy reports onto the new template
+
+### v4.0.0-alpha.32 — Infrastructure Graph + VT domain CTI
+
+- VT contacted **domains** are now queried on **ThreatFox** (exact) and **URLHaus host API**
+- Feodo/SSLBL still require **IPs** (domains alone cannot hit those feeds)
+- VT contacts move to **VT Contacted / Staging** (not auto-labeled Probable C2)
+- Infrastructure Graph: deduped IOC nodes, VT vs extracted edges, CTI match/checked/skipped status, family links
+- Explicit **query-only** note — no IOC/sample submit to ThreatFox / MalwareBazaar / URLHaus
+
+### v4.0.0-alpha.31 — HTML alert email templates
 
 - Hunt and WU/MTCN alert emails are now **multipart HTML + plain text**
 - Structured cards: verdict badge, VT malicious count, threat label, families, SHA256, matched keywords
