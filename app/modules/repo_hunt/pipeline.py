@@ -255,22 +255,61 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
     report['new_findings'] = len(findings)
     report['findings'] = [f.to_dict() for f in findings[: cfg.max_findings_email]]
 
-    if findings and send:
-        msg = build_findings_email(
-            findings,
-            cfg,
-            run_meta={
-                'sources': sources,
-                'candidates': report['candidates'],
-                'local_matches': report['local_matches'],
-                'wu_name_matches': report['wu_name_matches'],
-            },
-        )
-        report['email'] = send_email(msg, cfg)
+    js_findings = [f for f in findings if f.detection.rule != WU_RULE_ID]
+    wu_findings = [f for f in findings if f.detection.rule == WU_RULE_ID]
+    report['js_findings'] = len(js_findings)
+    report['wu_findings'] = len(wu_findings)
+
+    report['email'] = {'ok': True, 'skipped': True, 'reason': 'no_new_findings'}
+    report['wu_email'] = {'ok': True, 'skipped': True, 'reason': 'no_wu_hits'}
+
+    if send:
+        if js_findings:
+            msg = build_findings_email(
+                js_findings,
+                cfg,
+                run_meta={
+                    'sources': sources,
+                    'candidates': report['candidates'],
+                    'local_matches': report['local_matches'],
+                    'wu_name_matches': report['wu_name_matches'],
+                },
+            )
+            report['email'] = send_email(msg, cfg)
+        if wu_findings and cfg.analysis_alert_email:
+            # Same WU/MTCN report as Analyze — but from the 5-minute scheduled scan
+            from .notify.smtp_mailer import build_analysis_wu_alert_email
+
+            hits = []
+            for f in wu_findings:
+                vt = f.detection.vt_confirm or {}
+                hits.append({
+                    'filename': f.filename,
+                    'path': f.candidate.path,
+                    'url': f.candidate.html_url or f.candidate.url,
+                    'sha256': f.sha256,
+                    'matched_keywords': list(f.detection.matched_strings),
+                    'vt_verdict': vt.get('verdict'),
+                    'vt_malicious': vt.get('malicious'),
+                    'vt_link': vt.get('permalink'),
+                    'popular_threat_label': vt.get('popular_threat_label'),
+                    'family_labels': vt.get('family_labels') or [],
+                    'triage_url': f.triage_url,
+                })
+            wu_msg = build_analysis_wu_alert_email(
+                cfg=cfg,
+                job_id='scheduled-hunt',
+                source_url='repo-hunt-5min-scan',
+                hits=hits,
+                triage_url=cfg.triage_base_url or '',
+                scan_mode='scheduled',
+            )
+            report['wu_email'] = send_email(wu_msg, cfg)
+        elif wu_findings:
+            report['wu_email'] = {'ok': False, 'skipped': True, 'reason': 'ANALYSIS_ALERT_EMAIL disabled'}
     elif findings:
         report['email'] = {'ok': False, 'skipped': True, 'reason': 'send=false'}
-    else:
-        report['email'] = {'ok': True, 'skipped': True, 'reason': 'no_new_findings'}
+        report['wu_email'] = {'ok': False, 'skipped': True, 'reason': 'send=false'}
 
     report['ok'] = True
     report['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())

@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.modules.repo_hunt.config import RepoHuntConfig  # noqa: E402
 from app.modules.repo_hunt.detect.local_jsoutprox import scan_bytes  # noqa: E402
-from app.modules.repo_hunt.notify.smtp_mailer import build_findings_email  # noqa: E402
+from app.modules.repo_hunt.notify.smtp_mailer import build_analysis_wu_alert_email, build_findings_email  # noqa: E402
 from app.modules.repo_hunt.pipeline import run_repo_hunt  # noqa: E402
 from app.modules.repo_hunt.state import HuntState  # noqa: E402
 from app.modules.repo_hunt.types import Candidate, DetectionHit, Finding  # noqa: E402
@@ -80,6 +80,23 @@ class TestSmtpMessage(unittest.TestCase):
         self.assertIn('a/b', body)
         self.assertIn('potential_jsoutprox_js', body)
         self.assertIn('DETECT_GTI_MaliciousFilesWithWUKeywords', body)
+        self.assertNotIn('scheduled scan', msg['Subject'])
+
+        wu_msg = build_analysis_wu_alert_email(
+            cfg=cfg,
+            job_id='scheduled-hunt',
+            source_url='repo-hunt-5min-scan',
+            hits=[{
+                'filename': 'mtcn_drop.7z',
+                'sha256': 'b' * 64,
+                'matched_keywords': ['mtcn_'],
+                'vt_verdict': 'malicious',
+                'vt_malicious': 4,
+            }],
+            scan_mode='scheduled',
+        )
+        self.assertIn('WU/MTCN', wu_msg['Subject'])
+        self.assertIn('scheduled scan', wu_msg['Subject'])
 
 
 class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):

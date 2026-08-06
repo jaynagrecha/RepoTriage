@@ -40,8 +40,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.28'
-PLATFORM_VERSION = '4.0.0-alpha.28'
+APP_VERSION = '4.0.0-alpha.29'
+PLATFORM_VERSION = '4.0.0-alpha.29'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -672,6 +672,14 @@ async def repo_hunt_status(request: Request):
         'livehunt_wu_rule_id': cfg.vt_livehunt_wu_rule_id or None,
         'wu_hunt_enabled': cfg.wu_hunt_enabled,
         'analysis_alert_email': cfg.analysis_alert_email,
+        'hunt_loop': _env_truthy('REPO_HUNT_LOOP'),
+        'hunt_interval_seconds': int(os.getenv('REPO_HUNT_INTERVAL_SECONDS') or '300'),
+        'wu_scan': {
+            'scheduled': True,
+            'interval_seconds': int(os.getenv('REPO_HUNT_INTERVAL_SECONDS') or '300'),
+            'email_only_on_hit': True,
+            'rule': 'DETECT_GTI_MaliciousFilesWithWUKeywords',
+        },
         'watched_orgs': cfg.github_orgs,
         'watched_users': cfg.github_users,
         'webhook_secret_configured': bool(cfg.webhook_secret),

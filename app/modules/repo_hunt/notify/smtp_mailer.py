@@ -65,18 +65,33 @@ def build_analysis_wu_alert_email(
     source_url: str,
     hits: list[dict[str, Any]],
     triage_url: str = '',
+    scan_mode: str = 'analyze',
 ) -> EmailMessage:
+    """WU/MTCN alert — used by manual Analyze and the 5-minute scheduled scan."""
     msg = EmailMessage()
-    msg['Subject'] = (
-        f'[RepoTriage Analyze] WU/MTCN LiveHunt hit(s): {len(hits)} '
-        f'(DETECT_GTI_MaliciousFilesWithWUKeywords)'
-    )
+    mode = (scan_mode or 'analyze').strip().lower()
+    if mode in {'scheduled', 'hunt', 'loop', 'worker'}:
+        msg['Subject'] = (
+            f'[RepoTriage WU/MTCN] {len(hits)} hit(s) '
+            f'(DETECT_GTI_MaliciousFilesWithWUKeywords · scheduled scan)'
+        )
+        header = (
+            'RepoTriage scheduled WU/MTCN scan (every REPO_HUNT_INTERVAL_SECONDS) — '
+            'email sent only when a hit is found.'
+        )
+    else:
+        msg['Subject'] = (
+            f'[RepoTriage Analyze] WU/MTCN LiveHunt hit(s): {len(hits)} '
+            f'(DETECT_GTI_MaliciousFilesWithWUKeywords)'
+        )
+        header = 'RepoTriage analysis alert — Western Union / MTCN malicious filename rule'
     msg['From'] = cfg.smtp_from
     msg['To'] = cfg.smtp_to
     lines = [
-        'RepoTriage analysis alert — Western Union / MTCN malicious filename rule',
+        header,
         f'LiveHunt rule: DETECT_GTI_MaliciousFilesWithWUKeywords '
         f'(id {cfg.vt_livehunt_wu_rule_id or "20744291635"})',
+        f'Mode: {mode}',
         f'Job: {job_id or "-"}',
         f'Source: {source_url}',
         f'Triage: {triage_url or cfg.triage_base_url or "-"}',
@@ -85,12 +100,14 @@ def build_analysis_wu_alert_email(
     for i, hit in enumerate(hits, 1):
         lines.extend([
             f'{i}. {hit.get("filename") or hit.get("path") or "-"}',
+            f'   url: {hit.get("url") or source_url or "-"}',
             f'   sha256: {hit.get("sha256")}',
             f'   matched: {",".join(hit.get("matched_keywords") or [])}',
             f'   vt: verdict={hit.get("vt_verdict")} malicious={hit.get("vt_malicious")} '
             f'label={hit.get("popular_threat_label") or "-"}',
             f'   families: {",".join(hit.get("family_labels") or []) or "-"}',
             f'   vt link: {hit.get("vt_link") or "-"}',
+            f'   triage: {hit.get("triage_url") or triage_url or "-"}',
             '',
         ])
     msg.set_content('\n'.join(lines))

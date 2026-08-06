@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.29 — WU/MTCN on the 5-minute schedule
+
+- WU/MTCN LiveHunt scan runs with the 24/7 hunt worker (every `REPO_HUNT_INTERVAL_SECONDS`, default 300s)
+- Scheduled hits send `[RepoTriage WU/MTCN] …` email **only when a hit is found**
+- Manual Analyze still sends `[RepoTriage Analyze] WU/MTCN …` on hit
+- JsOutProx stays on the separate `[RepoTriage Hunt]` email
+
 ### v4.0.0-alpha.28 — 24/7 repo hunt worker
 
 - Hunt worker supports continuous loop mode (`REPO_HUNT_LOOP=true`)

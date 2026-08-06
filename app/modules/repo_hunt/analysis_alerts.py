@@ -116,6 +116,7 @@ def maybe_send_analysis_wu_alert(
         source_url=source_url,
         hits=hits,
         triage_url=triage,
+        scan_mode='analyze',
     )
     sent = send_email(msg, cfg)
     sent['hits'] = len(hits)
