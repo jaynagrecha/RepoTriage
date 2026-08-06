@@ -885,8 +885,17 @@ async def export_job_report_html(job_id: str):
     job = _load_job(job_id)
     if not job or not job.get('result'):
         raise HTTPException(status_code=404, detail='Completed job result not found')
-    report = job['result'].get('analyst_report') or build_analyst_report(job['result'])
-    return HTMLResponse(report.get('html',''))
+    result = job['result']
+    report = result.get('analyst_report') if isinstance(result.get('analyst_report'), dict) else None
+    # Rebuild when missing or still on the legacy markdown→<br> HTML stub
+    if not report or report.get('format') != 'templated_html_v1' or '<!DOCTYPE html>' not in str(report.get('html') or ''):
+        report = build_analyst_report(result)
+        result['analyst_report'] = report
+        try:
+            _save_job(job_id)
+        except Exception:
+            pass
+    return HTMLResponse(report.get('html') or '')
 
 
 STATIC_ANALYSIS_TASKS: dict[str, asyncio.Task] = {}
