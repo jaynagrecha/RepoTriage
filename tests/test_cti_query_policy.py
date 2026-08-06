@@ -6,8 +6,11 @@ from app.modules.cti_query_policy import (
     select_malware_ioc_candidates,
     should_query_threatfox,
     should_query_urlhaus,
+    should_query_urlhaus_host,
     threatfox_match_is_exact,
+    vt_sourced_domains,
 )
+from app.modules.cti_fusion import build_infrastructure_graph
 from app.modules.ioc_extractor import classify_infrastructure
 from app.modules.narrative import _risk_level
 
@@ -43,7 +46,34 @@ class TestCtiQueryPolicy(unittest.TestCase):
         self.assertNotIn('evil.example', cands)
         self.assertNotIn('github.com', cands)
 
-    def test_urlhaus_rejects_domain_only(self):
+    def test_includes_vt_contacted_domains(self):
+        iocs = {
+            'urls': [],
+            'domains': ['melissalawrenceks.dds.net', 'assets.adobe-us.com', 'noise.example'],
+            'ips': [],
+            'ioc_details': {
+                'domains': [
+                    {'indicator': 'melissalawrenceks.dds.net', 'sources': ['VirusTotal:abc']},
+                    {'indicator': 'assets.adobe-us.com', 'sources': ['VirusTotal:abc']},
+                    {'indicator': 'noise.example', 'sources': ['static']},
+                ],
+            },
+        }
+        self.assertEqual(
+            set(vt_sourced_domains(iocs)),
+            {'melissalawrenceks.dds.net', 'assets.adobe-us.com'},
+        )
+        cands = select_malware_ioc_candidates(iocs)
+        self.assertIn('melissalawrenceks.dds.net', cands)
+        self.assertNotIn('noise.example', cands)
+        allowed, reason = should_query_threatfox('melissalawrenceks.dds.net', allow_domain=True)
+        self.assertTrue(allowed)
+        self.assertEqual(reason, 'high_signal_domain')
+        host_ok, host_reason = should_query_urlhaus_host('melissalawrenceks.dds.net')
+        self.assertTrue(host_ok)
+        self.assertEqual(host_reason, 'high_signal_host')
+
+    def test_urlhaus_rejects_domain_only_on_url_api(self):
         allowed, reason = should_query_urlhaus('evil.example.com')
         self.assertFalse(allowed)
         self.assertEqual(reason, 'urlhaus_requires_full_url')
@@ -127,6 +157,68 @@ class TestNarrativeRiskExactOnly(unittest.TestCase):
             },
         }
         self.assertEqual(_risk_level(result), 'Low')
+
+
+class TestInfrastructureGraphProvenance(unittest.TestCase):
+    def test_dedupes_vt_domain_and_cti_status(self):
+        result = {
+            'root_file': {'filename': 'sample.7z', 'sha256': 'aa' * 32},
+            'files': [{'filename': 'sample.7z', 'sha256': 'aa' * 32, 'vt_verdict': 'malicious'}],
+            'file_stats': {'malicious': 1},
+            'iocs': {
+                'domains': ['melissalawrenceks.dds.net'],
+                'urls': [],
+                'ips': ['193.181.35.217'],
+                'ioc_details': {
+                    'domains': [{'indicator': 'melissalawrenceks.dds.net', 'sources': ['VirusTotal:deadbeef']}],
+                    'ips': [{'indicator': '193.181.35.217', 'sources': ['VirusTotal:deadbeef']}],
+                },
+            },
+            'infrastructure': {
+                'vt_contacted': [{
+                    'indicator': 'melissalawrenceks.dds.net',
+                    'type': 'VT Contacted Domain',
+                    'source': 'VirusTotal',
+                }],
+                'probable_c2': [{
+                    'indicator': '193.181.35.217',
+                    'type': 'Botnet C2',
+                    'source': 'FeodoTracker',
+                    'malware': 'remcos',
+                }],
+            },
+            'threat_intel': {
+                'threatfox': {
+                    'lookups': [{
+                        'indicator': 'melissalawrenceks.dds.net',
+                        'status': 'not_found',
+                        'match_count': 0,
+                    }],
+                    'found': [],
+                },
+                'urlhaus': {
+                    'results': [{
+                        'indicator': 'melissalawrenceks.dds.net',
+                        'indicator_type': 'domain/host',
+                        'found': True,
+                        'families': ['remcos'],
+                    }],
+                },
+                'feodo': {'matches': [{'ip': '193.181.35.217', 'malware': 'remcos'}]},
+                'sslbl': {'matches': []},
+                'malwarebazaar': {'summary': {'found': 0}, 'results': []},
+            },
+            'vt': {'family': {'name': 'remcos'}, 'verdict': 'malicious'},
+        }
+        g = build_infrastructure_graph(result)
+        domain_nodes = [n for n in g['nodes'] if n['type'] == 'domain' and 'melissalawrenceks' in n['label']]
+        self.assertEqual(len(domain_nodes), 1)
+        self.assertEqual(domain_nodes[0]['meta'].get('cti_status'), 'matched')
+        self.assertTrue(domain_nodes[0]['meta'].get('vt_contacted'))
+        self.assertGreaterEqual(g['summary']['cti_matched_nodes'], 1)
+        self.assertGreaterEqual(g['summary']['vt_contacted_nodes'], 1)
+        labels = {(e['from'], e['label'], e['to']) for e in g['edges']}
+        self.assertTrue(any(e[1] == 'vt contacted' for e in labels))
 
 
 if __name__ == '__main__':

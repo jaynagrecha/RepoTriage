@@ -136,9 +136,10 @@ class TestVtContactsMerge(unittest.TestCase):
         self.assertTrue(any('8072' in u for u in merged['urls']))
 
         infra = integrate_vt_infrastructure({}, reports)
-        indicators = {row['indicator'] for row in infra['probable_c2']}
+        indicators = {row['indicator'] for row in infra['vt_contacted']}
         self.assertIn('deubsjoinpawmderl.ddns.net', indicators)
         self.assertIn('178.255.148.207', indicators)
+        self.assertEqual(infra.get('probable_c2') or [], [])
 
 
 class TestVtContactsEnrich(unittest.IsolatedAsyncioTestCase):

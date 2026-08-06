@@ -7,7 +7,12 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .cti_query_policy import select_malware_ioc_candidates, should_query_urlhaus
+from .cti_query_policy import (
+    select_malware_ioc_candidates,
+    should_query_urlhaus,
+    should_query_urlhaus_host,
+    vt_sourced_domains,
+)
 
 URLHAUS_URL_API = "https://urlhaus-api.abuse.ch/v1/url/"
 URLHAUS_HOST_API = "https://urlhaus-api.abuse.ch/v1/host/"
@@ -190,8 +195,11 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
         return {"enabled": False, "status": "disabled", "results": [], "summary": {"looked_up": 0, "found": 0}}
     limit = int(os.getenv("URLHAUS_LOOKUP_LIMIT", "75"))
     results = []
-    candidates = [u for u in select_malware_ioc_candidates(iocs, limit=limit) if (u or '').strip().lower().startswith(('http://', 'https://'))]
-    for value in candidates:
+    url_candidates = [
+        u for u in select_malware_ioc_candidates(iocs, limit=limit, include_vt_domains=False)
+        if (u or '').strip().lower().startswith(('http://', 'https://'))
+    ]
+    for value in url_candidates:
         allowed, skip_reason = should_query_urlhaus(value)
         if not allowed:
             results.append({
@@ -203,11 +211,40 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
             })
             continue
         results.append(await lookup_url(value, base_dir))
+        if len(results) >= limit:
+            break
+
+    # High-signal VT contacted domains → URLHaus host API (already implemented, previously unused)
+    host_hits = 0
+    for host in vt_sourced_domains(iocs):
+        if len(results) >= limit:
+            break
+        allowed, skip_reason = should_query_urlhaus_host(host)
+        if not allowed:
+            results.append({
+                "indicator": host,
+                "indicator_type": "domain/host",
+                "status": "skipped",
+                "skip_reason": skip_reason,
+                "found": False,
+            })
+            continue
+        row = await lookup_host(host, base_dir)
+        results.append(row)
+        if row.get("found"):
+            host_hits += 1
+
     return {
         "enabled": True,
         "status": "completed",
-        "exact_url_only": True,
+        "exact_url_only": False,
+        "url_and_vt_host_queries": True,
+        "vt_host_matches": host_hits,
         "results": results,
         "summary": _summary(results),
-        "policy_note": "URLHaus queries exact malware-delivery URLs only. Domains, platform URLs, and heuristic infra are skipped.",
+        "policy_note": (
+            "URLHaus queries exact malware-delivery URLs, plus VirusTotal contacted domains via the host API. "
+            "Static-extracted bare domains and platform URLs are skipped. "
+            "Query-only — RepoTriage does not submit URLs to URLHaus."
+        ),
     }

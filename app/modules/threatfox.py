@@ -139,14 +139,14 @@ def normalize_result(indicator: str, payload: dict, cache_hit: bool = False) -> 
     }
 
 
-async def lookup_ioc(indicator: str, base_dir: Path) -> dict:
+async def lookup_ioc(indicator: str, base_dir: Path, *, allow_domain: bool = False) -> dict:
     indicator = (indicator or "").strip()
     if not indicator:
         return {"indicator": indicator, "status": "invalid", "matches": [], "match_count": 0}
     if not _enabled():
         return {"indicator": indicator, "status": "disabled", "matches": [], "match_count": 0}
 
-    allowed, skip_reason = should_query_threatfox(indicator)
+    allowed, skip_reason = should_query_threatfox(indicator, allow_domain=allow_domain)
     if not allowed:
         return {
             "indicator": indicator,
@@ -275,17 +275,21 @@ def _build_summary(lookups: list[dict], found: list[dict]) -> dict:
 
 
 async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
-    """Lookup malware IOCs in ThreatFox — exact match, no domain pivots."""
+    """Lookup malware IOCs in ThreatFox — exact match; VT-contacted domains allowed."""
+    from .cti_query_policy import vt_sourced_domains
+
     if not _enabled():
         return {"enabled": False, "status": "disabled", "lookups": [], "found": [], "summary": {"looked_up": 0, "found": 0}, "relationships": {}}
 
     limit = int(os.getenv("THREATFOX_LOOKUP_LIMIT", "75"))
-    candidates = select_malware_ioc_candidates(iocs, limit=limit)
+    candidates = select_malware_ioc_candidates(iocs, limit=limit, include_vt_domains=True)
+    vt_domains = {d.lower() for d in vt_sourced_domains(iocs)}
 
     lookups = []
     found = []
     for indicator in candidates:
-        res = await lookup_ioc(indicator, base_dir)
+        allow_domain = indicator.strip().lower() in vt_domains
+        res = await lookup_ioc(indicator, base_dir, allow_domain=allow_domain)
         lookups.append(res)
         if res.get("status") == "found":
             found.append(res)
@@ -297,9 +301,14 @@ async def enrich_iocs(iocs: dict, base_dir: Path) -> dict:
         "enabled": True,
         "status": "completed",
         "exact_match_only": True,
+        "vt_domains_queried": sorted(vt_domains),
         "lookups": lookups,
         "found": found,
         "summary": summary,
         "relationships": relationships,
-        "policy_note": "Queries malware IOCs only (URLs, IPs, hashes, webhooks). Domains/emails/wallets are display-only. Exact match; platform hosts skipped.",
+        "policy_note": (
+            "Queries malware IOCs (URLs, IPs, hashes, webhooks) plus VirusTotal contacted domains. "
+            "Static-extracted bare domains/emails/wallets stay display-only. Exact match; platform hosts skipped. "
+            "Query-only — RepoTriage does not submit IOCs to ThreatFox."
+        ),
     }

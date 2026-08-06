@@ -4,7 +4,7 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
-### v4.0.0-alpha.31 — HTML alert email templates
+### v4.0.0-alpha.32 — HTML alert email templates
 
 - Hunt and WU/MTCN alert emails are now **multipart HTML + plain text**
 - Structured cards: verdict badge, VT malicious count, threat label, families, SHA256, matched keywords

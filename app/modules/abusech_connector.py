@@ -60,7 +60,14 @@ async def _download_feed(url: str, timeout: float = 20) -> str:
 
 
 def _public_ips(iocs: dict) -> set[str]:
-    return set(iocs.get("ips", []) or [])
+    from .cti_query_policy import is_public_ip_indicator
+
+    out: set[str] = set()
+    for raw in iocs.get("ips", []) or []:
+        ip = str(raw or "").strip()
+        if ip and is_public_ip_indicator(ip):
+            out.add(ip)
+    return out
 
 
 async def enrich_feodo(iocs: dict, base_dir: Path) -> dict:
