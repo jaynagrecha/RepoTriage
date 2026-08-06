@@ -29,6 +29,7 @@ from .modules.abusech_connector import enrich_feodo, enrich_sslbl, abusech_summa
 from .modules.cti_selftest import run_cti_selftest
 from .modules.repo_hunt import HuntState, RepoHuntConfig, run_repo_hunt
 from .modules.repo_hunt.analysis_alerts import collect_wu_hits_from_analysis, maybe_send_analysis_wu_alert
+from .modules.filename_signals import detect_dual_extension, scan_names_for_dual_extension
 from .modules.mitre_mapper import map_mitre
 from .modules.narrative import generate_attack_narrative
 from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
@@ -40,8 +41,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.29'
-PLATFORM_VERSION = '4.0.0-alpha.29'
+APP_VERSION = '4.0.0-alpha.30'
+PLATFORM_VERSION = '4.0.0-alpha.30'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -250,6 +251,86 @@ def build_summary(meta: dict, hashes: dict, file_type: str, vt: dict) -> str:
         f"{contact_line}\n\n"
         f"Archive extraction, IOC extraction, Abuse.ch CTI enrichment, MITRE ATT&CK mapping, and infrastructure classification are enabled in this build."
     )
+
+
+def _annotate_dual_extension(entry: dict) -> dict:
+    names = [
+        entry.get('filename'),
+        entry.get('original_name'),
+        entry.get('path'),
+        entry.get('vt_original_filename'),
+        entry.get('vt_meaningful_name'),
+    ]
+    names.extend(entry.get('vt_names') or [])
+    hits = scan_names_for_dual_extension(names)
+    if hits:
+        entry['dual_extension'] = hits[0]
+        entry['dual_extensions'] = hits
+    return entry
+
+
+def _build_relations_view(vt_result: dict, inventory: list[dict], meta: dict) -> dict:
+    """Merge VT Relations with local extraction hierarchy for the UI."""
+    vt_rel = (vt_result.get('relations') if isinstance(vt_result, dict) else None) or {}
+    dual = list(vt_result.get('dual_extensions') or []) if isinstance(vt_result, dict) else []
+
+    local_extracted = []
+    for item in inventory[1:]:
+        row = {
+            'id': item.get('sha256'),
+            'sha256': item.get('sha256'),
+            'name': item.get('original_name') or item.get('filename') or item.get('path'),
+            'file_type': item.get('file_type'),
+            'size': item.get('size_bytes'),
+            'malicious': item.get('vt_malicious') or 0,
+            'suspicious': item.get('vt_suspicious') or 0,
+            'detections': (
+                f"{item.get('vt_malicious') or 0}/?"
+                if item.get('vt_verdict') else '-'
+            ),
+            'permalink': item.get('vt_link'),
+            'relationship': 'extracted_children',
+            'source': 'local_extraction',
+            'parent_archive': item.get('parent_archive'),
+            'depth': item.get('depth'),
+        }
+        dual_hit = item.get('dual_extension') or detect_dual_extension(row['name'])
+        if dual_hit:
+            row['dual_extension'] = dual_hit
+            dual.append(dual_hit)
+        local_extracted.append(row)
+
+    # Dedup dual extensions
+    dual = scan_names_for_dual_extension([d.get('filename') for d in dual if isinstance(d, dict)] + [
+        x.get('name') for x in local_extracted
+    ])
+
+    graph = dict(vt_result.get('relations_graph_summary') or {}) if isinstance(vt_result, dict) else {}
+    for key in (
+        'execution_parents', 'compressed_parents', 'bundled_files', 'dropped_files',
+        'itw_urls', 'itw_domains', 'contacted_domains', 'contacted_ips', 'contacted_urls',
+    ):
+        graph.setdefault(key, len(vt_rel.get(key) or []))
+    graph['extracted_children'] = len(local_extracted)
+    graph['dual_extensions'] = len(dual)
+
+    return {
+        'execution_parents': list(vt_rel.get('execution_parents') or []),
+        'compressed_parents': list(vt_rel.get('compressed_parents') or []),
+        'bundled_files': list(vt_rel.get('bundled_files') or []),
+        'dropped_files': list(vt_rel.get('dropped_files') or []),
+        'extracted_children': local_extracted,
+        'itw_urls': list(vt_rel.get('itw_urls') or []),
+        'itw_domains': list(vt_rel.get('itw_domains') or []),
+        'contacted_domains': list(vt_rel.get('contacted_domains') or []),
+        'contacted_ips': list(vt_rel.get('contacted_ips') or []),
+        'contacted_urls': list(vt_rel.get('contacted_urls') or []),
+        'dual_extensions': dual,
+        'graph_summary': graph,
+        'permalink': (vt_result or {}).get('permalink'),
+        'root_name': meta.get('filename') or (inventory[0].get('filename') if inventory else None),
+        'root_sha256': (inventory[0].get('sha256') if inventory else None) or (vt_result or {}).get('sha256'),
+    }
 
 
 def _vt_inventory_fields(vt: dict | None) -> dict:
@@ -1086,6 +1167,9 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
                     })
                     vt_reports.append(child_vt)
 
+        for entry in inventory:
+            _annotate_dual_extension(entry)
+
         malicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'malicious')
         suspicious_count = sum(1 for x in inventory if str(x.get('vt_verdict','')).lower() == 'suspicious')
         child_inventory = inventory[1:]
@@ -1264,7 +1348,28 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
             'exports_misp': export_misp(preliminary),
             'exports_available': ['json', 'csv', 'stix', 'misp', 'html_report'],
             'summary': summary,
+            'relations': _build_relations_view(vt_result, inventory, meta),
         }
+        rel = result['relations']
+        if rel.get('dual_extensions'):
+            summary += (
+                f"\n\nDual-extension / masquerade filenames: {len(rel['dual_extensions'])} "
+                f"({', '.join(d.get('label') or d.get('filename') for d in rel['dual_extensions'][:5])})."
+            )
+            result['summary'] = summary
+        graph = rel.get('graph_summary') or {}
+        if any(graph.get(k) for k in (
+            'execution_parents', 'dropped_files', 'bundled_files', 'compressed_parents', 'extracted_children',
+        )):
+            summary += (
+                f"\n\nVT/local relations: "
+                f"execution_parents={graph.get('execution_parents', 0)}, "
+                f"compressed_parents={graph.get('compressed_parents', 0)}, "
+                f"bundled={graph.get('bundled_files', 0)}, "
+                f"dropped={graph.get('dropped_files', 0)}, "
+                f"extracted_children={graph.get('extracted_children', 0)}."
+            )
+            result['summary'] = summary
         wu_hits = collect_wu_hits_from_analysis(result)
         result['livehunt_matches'] = wu_hits
         if wu_hits:

@@ -195,11 +195,112 @@ def _normalize_file_report(sha256: str, data: dict, cache_hit: bool = False) -> 
         "contacted_ips": [],
         "contacted_urls": [],
         "contacts_fetched": False,
-        "schema": 2,
+        "relations": {},
+        "relations_fetched": False,
+        "schema": 3,
     }
 
 
-async def _fetch_relationship_ids(client: httpx.AsyncClient, sha256: str, relationship: str, headers: dict[str, str], limit: int = 40) -> list[str]:
+def _stats_detections(stats: dict | None) -> dict:
+    stats = stats if isinstance(stats, dict) else {}
+    malicious = int(stats.get("malicious") or 0)
+    suspicious = int(stats.get("suspicious") or 0)
+    harmless = int(stats.get("harmless") or 0)
+    undetected = int(stats.get("undetected") or 0)
+    total = malicious + suspicious + harmless + undetected
+    return {
+        "malicious": malicious,
+        "suspicious": suspicious,
+        "harmless": harmless,
+        "undetected": undetected,
+        "total": total,
+        "detections": f"{malicious}/{total}" if total else "-",
+    }
+
+
+def _normalize_relation_item(row: dict, relationship: str) -> dict | None:
+    if not isinstance(row, dict):
+        return None
+    rid = (row.get("id") or "").strip()
+    rtype = (row.get("type") or "").strip()
+    attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
+    if not rid:
+        return None
+
+    item: dict = {
+        "id": rid,
+        "type": rtype or "unknown",
+        "relationship": relationship,
+    }
+
+    if rtype == "file" or relationship in {
+        "execution_parents", "compressed_parents", "bundled_files", "dropped_files",
+    }:
+        names = attrs.get("names") or []
+        meaningful = (attrs.get("meaningful_name") or "").strip()
+        name = meaningful or (names[0] if names else rid[:16])
+        stats = _stats_detections(attrs.get("last_analysis_stats"))
+        item.update({
+            "name": name,
+            "names": names[:8] if isinstance(names, list) else [],
+            "file_type": attrs.get("type_description") or attrs.get("type_tag") or "",
+            "size": attrs.get("size"),
+            "sha256": rid if len(rid) == 64 else attrs.get("sha256"),
+            "permalink": f"https://www.virustotal.com/gui/file/{rid}",
+            **stats,
+        })
+        from .filename_signals import detect_dual_extension
+        dual = detect_dual_extension(name)
+        if not dual:
+            for n in names[:5]:
+                dual = detect_dual_extension(n)
+                if dual:
+                    break
+        if dual:
+            item["dual_extension"] = dual
+        return item
+
+    if rtype == "url" or relationship in {"itw_urls", "contacted_urls"}:
+        stats = _stats_detections(attrs.get("last_analysis_stats"))
+        url = attrs.get("url") or rid
+        item.update({
+            "url": url,
+            "name": url,
+            "last_http_response_code": attrs.get("last_http_response_code"),
+            "permalink": f"https://www.virustotal.com/gui/url/{rid}" if len(rid) == 64 else "",
+            **stats,
+        })
+        return item
+
+    if rtype in {"domain", "ip_address"} or relationship in {
+        "itw_domains", "contacted_domains", "contacted_ips",
+    }:
+        stats = _stats_detections(attrs.get("last_analysis_stats"))
+        item.update({
+            "name": rid,
+            "registrar": attrs.get("registrar"),
+            "creation_date": attrs.get("creation_date"),
+            "country": attrs.get("country"),
+            "permalink": (
+                f"https://www.virustotal.com/gui/domain/{rid}"
+                if rtype == "domain" or relationship.endswith("domains")
+                else f"https://www.virustotal.com/gui/ip-address/{rid}"
+            ),
+            **stats,
+        })
+        return item
+
+    item["name"] = rid
+    return item
+
+
+async def _fetch_relationship_items(
+    client: httpx.AsyncClient,
+    sha256: str,
+    relationship: str,
+    headers: dict[str, str],
+    limit: int = 20,
+) -> list[dict]:
     url = f"https://www.virustotal.com/api/v3/files/{sha256}/{relationship}"
     try:
         resp = await client.get(url, headers=headers, params={"limit": limit})
@@ -208,41 +309,89 @@ async def _fetch_relationship_ids(client: httpx.AsyncClient, sha256: str, relati
     if resp.status_code != 200:
         return []
     rows = (resp.json().get("data") or [])
-    out: list[str] = []
+    out: list[dict] = []
     for row in rows:
-        if not isinstance(row, dict):
-            continue
-        rid = (row.get("id") or "").strip()
-        if rid:
-            out.append(rid)
+        item = _normalize_relation_item(row, relationship)
+        if item:
+            out.append(item)
     return out
 
 
+async def _fetch_relationship_ids(client: httpx.AsyncClient, sha256: str, relationship: str, headers: dict[str, str], limit: int = 40) -> list[str]:
+    items = await _fetch_relationship_items(client, sha256, relationship, headers, limit=limit)
+    out: list[str] = []
+    for item in items:
+        # Prefer human identifier
+        for key in ("url", "name", "id"):
+            val = (item.get(key) or "").strip()
+            if val:
+                out.append(val)
+                break
+    return out
+
+
+_RELATION_KEYS = (
+    "execution_parents",
+    "compressed_parents",
+    "bundled_files",
+    "dropped_files",
+    "itw_urls",
+    "itw_domains",
+    "contacted_domains",
+    "contacted_ips",
+    "contacted_urls",
+)
+
+
 async def enrich_vt_contacts(report: dict, base_dir: Path) -> dict:
-    """Attach VT contacted_domains / contacted_ips / contacted_urls (sandbox/behavior)."""
+    """Backward-compatible wrapper — full relations enrichment."""
+    return await enrich_vt_relations(report, base_dir)
+
+
+async def enrich_vt_relations(report: dict, base_dir: Path) -> dict:
+    """Attach VT Relations graph: parents, dropped/bundled, ITW, contacted infra."""
     if not isinstance(report, dict) or report.get("status") != "found":
         return report
     sha256 = (report.get("sha256") or "").strip().lower()
     api_key = os.getenv("VT_API_KEY", "").strip()
     if not sha256 or not api_key:
         return report
-    if report.get("contacts_fetched"):
+    if report.get("relations_fetched") and int(report.get("schema") or 0) >= 3:
         return report
 
     headers = {"x-apikey": api_key}
+    relations: dict[str, list] = {k: [] for k in _RELATION_KEYS}
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
-            domains = await _fetch_relationship_ids(client, sha256, "contacted_domains", headers)
-            ips = await _fetch_relationship_ids(client, sha256, "contacted_ips", headers)
-            urls = await _fetch_relationship_ids(client, sha256, "contacted_urls", headers)
+        async with httpx.AsyncClient(timeout=45) as client:
+            for key in _RELATION_KEYS:
+                relations[key] = await _fetch_relationship_items(client, sha256, key, headers, limit=20)
     except Exception:
-        domains, ips, urls = [], [], []
+        pass
 
-    report["contacted_domains"] = domains[:40]
-    report["contacted_ips"] = ips[:40]
-    report["contacted_urls"] = urls[:40]
+    report["relations"] = relations
+    report["relations_fetched"] = True
+    report["contacted_domains"] = [x.get("name") or x.get("id") for x in relations.get("contacted_domains") or [] if x][:40]
+    report["contacted_ips"] = [x.get("name") or x.get("id") for x in relations.get("contacted_ips") or [] if x][:40]
+    report["contacted_urls"] = [x.get("url") or x.get("name") or x.get("id") for x in relations.get("contacted_urls") or [] if x][:40]
     report["contacts_fetched"] = True
-    # Refresh cache entry
+    report["schema"] = 3
+
+    # Dual-extension hits across relation filenames + VT names
+    from .filename_signals import scan_names_for_dual_extension
+    name_pool: list[str] = list(report.get("names") or [])
+    if report.get("original_filename"):
+        name_pool.append(report["original_filename"])
+    for bucket in ("execution_parents", "compressed_parents", "bundled_files", "dropped_files"):
+        for row in relations.get(bucket) or []:
+            if row.get("name"):
+                name_pool.append(row["name"])
+            name_pool.extend(row.get("names") or [])
+    report["dual_extensions"] = scan_names_for_dual_extension(name_pool)
+
+    graph_summary = {k: len(relations.get(k) or []) for k in _RELATION_KEYS}
+    graph_summary["dual_extensions"] = len(report["dual_extensions"])
+    report["relations_graph_summary"] = graph_summary
+
     try:
         cache = _load_cache(base_dir)
         cache[sha256] = {k: v for k, v in report.items() if k != "cache_hit"}
@@ -268,11 +417,11 @@ async def lookup_file_hash(sha256: str, base_dir: Path, force_refresh: bool = Fa
     cache = _load_cache(base_dir)
     if not force_refresh and key in cache:
         item = cache[key]
-        # Bust stale cache missing family-label / contacts schema
-        if isinstance(item, dict) and item.get("status") == "found" and int(item.get("schema") or 0) >= 2:
+        # Bust stale cache missing relations schema
+        if isinstance(item, dict) and item.get("status") == "found" and int(item.get("schema") or 0) >= 3:
             item["cache_hit"] = True
-            if not item.get("contacts_fetched"):
-                item = await enrich_vt_contacts(item, base_dir)
+            if not item.get("relations_fetched"):
+                item = await enrich_vt_relations(item, base_dir)
             return item
 
     url = f"https://www.virustotal.com/api/v3/files/{key}"
@@ -352,7 +501,7 @@ async def lookup_file_hash(sha256: str, base_dir: Path, force_refresh: bool = Fa
 
     normalized = _normalize_file_report(key, resp.json(), cache_hit=False)
     normalized["queried_at"] = datetime.now(timezone.utc).isoformat()
-    normalized = await enrich_vt_contacts(normalized, base_dir)
+    normalized = await enrich_vt_relations(normalized, base_dir)
     cache[key] = {k: v for k, v in normalized.items() if k != "cache_hit"}
     _save_cache(base_dir, cache)
     return normalized

@@ -4,6 +4,14 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.30 — VT Relations + dual-extension
+
+- New **Relations** Summary tab (VT-style): execution/compressed parents, bundled + dropped files, ITW URLs/domains, contacted infra
+- Local archive **extracted children** merged into the same view
+- **Dual-extension / masquerade** detection (`*.jpg.js`, `*.jpg.7z`, `*.pdf.exe`, stem tokens like `*_jpg.js`) with badges on Files + Relations
+- Overview shows a Relations snapshot; analyst summary includes relation + dual-ext counts
+- VT cache schema 3 fetches full relationship graph (parents/dropped/bundled/ITW/contacted)
+
 ### v4.0.0-alpha.29 — WU/MTCN on the 5-minute schedule
 
 - WU/MTCN LiveHunt scan runs with the 24/7 hunt worker (every `REPO_HUNT_INTERVAL_SECONDS`, default 300s)
