@@ -41,8 +41,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.33'
-PLATFORM_VERSION = '4.0.0-alpha.33'
+APP_VERSION = '4.0.0-alpha.34'
+PLATFORM_VERSION = '4.0.0-alpha.34'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -888,7 +888,7 @@ async def export_job_report_html(job_id: str):
     result = job['result']
     report = result.get('analyst_report') if isinstance(result.get('analyst_report'), dict) else None
     # Rebuild when missing or still on the legacy markdown→<br> HTML stub
-    if not report or report.get('format') != 'templated_html_v1' or '<!DOCTYPE html>' not in str(report.get('html') or ''):
+    if not report or report.get('format') not in {'templated_html_v1', 'templated_html_v2'} or 'section-num' not in str(report.get('html') or ''):
         report = build_analyst_report(result)
         result['analyst_report'] = report
         try:

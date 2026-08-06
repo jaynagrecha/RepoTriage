@@ -4,6 +4,11 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.34 — Analyst Report visual design
+
+- Richer standalone HTML report CSS: DM Sans + IBM Plex Mono, layered background, risk pill, numbered sections, TOC chips
+- Improved tables, action checklists, empty states, and print stylesheet
+
 ### v4.0.0-alpha.33 — Templated Analyst Report HTML
 
 - Downloaded / exported Analyst Report HTML is a full RepoTriage template (not markdown→`<br>`)
