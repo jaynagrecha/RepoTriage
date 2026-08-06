@@ -120,66 +120,285 @@ def _cti_risk_level(result: dict, anchors: dict | None = None) -> str:
     return 'Low'
 
 
-def build_infrastructure_graph(result: dict) -> dict:
-    """Build a UI-friendly relationship graph.
+def _ioc_canonical_id(value: str) -> tuple[str, str]:
+    """Return (node_id, node_type) for an indicator string."""
+    s = str(value or '').strip()
+    low = s.lower()
+    if low.startswith(('http://', 'https://')):
+        return f'ioc:url:{low}', 'url'
+    if all(c.isdigit() or c == '.' for c in low) and low.count('.') == 3:
+        return f'ioc:ip:{low}', 'ip'
+    if '/' not in low and ' ' not in low and '.' in low:
+        return f'ioc:domain:{low}', 'domain'
+    return f'ioc:other:{low}', 'ioc'
 
-    The graph is deliberately simple: non-technical users should be able to see
-    the root sample in the middle, then files/families/IOCs/CTI evidence around it.
-    """
-    nodes=[]; edges=[]; seen=set(); edge_seen=set()
-    def add_node(nid,label,typ,meta=None, severity='neutral'):
-        if not nid or nid in seen: return
-        seen.add(nid); nodes.append({'id':nid,'label':label,'type':typ,'meta':meta or {}, 'severity': severity})
-    def add_edge(src,dst,label,source=None):
-        if not src or not dst: return
-        key=(src,dst,label,source)
-        if key in edge_seen: return
-        edge_seen.add(key); edges.append({'from':src,'to':dst,'label':label,'source':source})
-    root=result.get('root_file') or {}
-    sample_id='sample:'+str(root.get('sha256') or root.get('filename') or 'root')
-    add_node(sample_id, root.get('filename') or 'Root Sample','sample',{'sha256':root.get('sha256'), 'role':'GitHub-hosted root file'}, 'critical' if (result.get('file_stats') or {}).get('malicious') else 'neutral')
-    # files
+
+def _cti_status_index(result: dict) -> dict[str, dict]:
+    """Map indicator → CTI query/match status for graph node meta."""
+    ti = result.get('threat_intel') or {}
+    out: dict[str, dict] = {}
+
+    def touch(ind: str, **fields):
+        key = str(ind or '').strip().lower()
+        if not key:
+            return
+        row = out.setdefault(key, {'indicator': ind, 'sources': [], 'status': 'not_queried', 'matched': False})
+        for src in fields.pop('sources', []) or []:
+            if src and src not in row['sources']:
+                row['sources'].append(src)
+        for k, v in fields.items():
+            if v is None:
+                continue
+            if k == 'status' and row.get('matched') and v != 'matched':
+                continue
+            row[k] = v
+        if fields.get('matched'):
+            row['matched'] = True
+            row['status'] = 'matched'
+
+    for row in (ti.get('threatfox') or {}).get('lookups') or []:
+        ind = row.get('indicator')
+        if row.get('status') == 'found':
+            touch(ind, sources=['ThreatFox'], status='matched', matched=True, threatfox=row.get('match_count') or 1)
+        elif row.get('status') == 'skipped':
+            touch(ind, sources=['ThreatFox'], status='skipped', skip_reason=row.get('skip_reason'))
+        elif row.get('status') in {'not_found', 'ok'}:
+            touch(ind, sources=['ThreatFox'], status='queried_not_found')
+        elif row.get('status'):
+            touch(ind, sources=['ThreatFox'], status=str(row.get('status')))
+
+    for row in (ti.get('urlhaus') or {}).get('results') or []:
+        ind = row.get('indicator') or row.get('url') or row.get('host')
+        if row.get('found'):
+            touch(ind, sources=['URLHaus'], status='matched', matched=True, families=row.get('families') or [])
+        elif row.get('status') == 'skipped':
+            touch(ind, sources=['URLHaus'], status='skipped', skip_reason=row.get('skip_reason'))
+        elif row.get('status') in {'not_found', 'ok'}:
+            touch(ind, sources=['URLHaus'], status='queried_not_found')
+
+    for row in (ti.get('feodo') or {}).get('matches') or []:
+        touch(row.get('ip'), sources=['FeodoTracker'], status='matched', matched=True, malware=row.get('malware'))
+    for row in (ti.get('sslbl') or {}).get('matches') or []:
+        touch(row.get('ip'), sources=['SSLBL'], status='matched', matched=True)
+
+    # Mark public IPs as feed-checked even without a hit (Feodo/SSLBL are set intersections)
+    for ip in _as_list((result.get('iocs') or {}).get('ips'))[:200]:
+        key = str(ip).strip().lower()
+        if key and key not in out:
+            touch(ip, sources=['FeodoTracker', 'SSLBL'], status='queried_not_found')
+        elif key:
+            touch(ip, sources=['FeodoTracker', 'SSLBL'])
+    return out
+
+
+def build_infrastructure_graph(result: dict) -> dict:
+    """Build a UI-friendly relationship graph with VT/CTI provenance."""
+    nodes = []
+    edges = []
+    seen = set()
+    edge_seen = set()
+    node_by_id: dict[str, dict] = {}
+
+    def add_node(nid, label, typ, meta=None, severity='neutral'):
+        if not nid:
+            return
+        if nid in seen:
+            # Merge meta / escalate severity when revisiting canonical IOC nodes
+            existing = node_by_id.get(nid)
+            if existing and isinstance(meta, dict):
+                merged = dict(existing.get('meta') or {})
+                for k, v in meta.items():
+                    if k == 'sources' and isinstance(v, list):
+                        cur = list(merged.get('sources') or [])
+                        for item in v:
+                            if item not in cur:
+                                cur.append(item)
+                        merged['sources'] = cur
+                    elif v not in (None, '', [], {}):
+                        merged[k] = v
+                existing['meta'] = merged
+                rank = {'neutral': 0, 'info': 1, 'warning': 2, 'critical': 3}
+                if rank.get(severity, 0) > rank.get(existing.get('severity'), 0):
+                    existing['severity'] = severity
+            return
+        seen.add(nid)
+        node = {'id': nid, 'label': label, 'type': typ, 'meta': meta or {}, 'severity': severity}
+        nodes.append(node)
+        node_by_id[nid] = node
+
+    def add_edge(src, dst, label, source=None):
+        if not src or not dst or src == dst:
+            return
+        key = (src, dst, label, source)
+        if key in edge_seen:
+            return
+        edge_seen.add(key)
+        edges.append({'from': src, 'to': dst, 'label': label, 'source': source})
+
+    cti_idx = _cti_status_index(result)
+    root = result.get('root_file') or {}
+    sample_id = 'sample:' + str(root.get('sha256') or root.get('filename') or 'root')
+    add_node(
+        sample_id,
+        root.get('filename') or 'Root Sample',
+        'sample',
+        {'sha256': root.get('sha256'), 'role': 'Analyzed root file'},
+        'critical' if (result.get('file_stats') or {}).get('malicious') else 'neutral',
+    )
+
     for f in result.get('files') or []:
-        fid='file:'+str(f.get('sha256') or f.get('filename'))
-        sev='critical' if str(f.get('vt_verdict','')).lower()=='malicious' else ('warning' if str(f.get('vt_verdict','')).lower()=='suspicious' else 'neutral')
-        add_node(fid, f.get('original_name') or f.get('filename') or 'file','file',{'verdict':f.get('vt_verdict'),'sha256':f.get('sha256'),'type':f.get('file_type')}, sev)
-        add_edge(sample_id,fid,'contains')
-    # families
+        fid = 'file:' + str(f.get('sha256') or f.get('filename'))
+        sev = (
+            'critical' if str(f.get('vt_verdict', '')).lower() == 'malicious'
+            else ('warning' if str(f.get('vt_verdict', '')).lower() == 'suspicious' else 'neutral')
+        )
+        add_node(
+            fid,
+            f.get('original_name') or f.get('filename') or 'file',
+            'file',
+            {'verdict': f.get('vt_verdict'), 'sha256': f.get('sha256'), 'type': f.get('file_type')},
+            sev,
+        )
+        add_edge(sample_id, fid, 'contains')
+
+    family_nodes: dict[str, str] = {}
     for fam in (build_cti_dashboard(result).get('families') or []):
-        nid='family:'+fam['name']
-        add_node(nid,fam['name'],'family',fam,'warning')
-        add_edge(sample_id,nid,'associated family', ', '.join(fam.get('sources') or []))
-    # extracted IOCs
-    iocs=result.get('iocs') or {}
-    labels={'urls':'URL','domains':'Domain','ips':'IP','emails':'Email','discord_webhooks':'Discord Webhook','telegram':'Telegram','wallets':'Wallet'}
-    for typ in ('urls','domains','ips','emails','discord_webhooks','telegram','wallets'):
+        nid = 'family:' + fam['name']
+        family_nodes[str(fam['name']).lower()] = nid
+        add_node(nid, fam['name'], 'family', fam, 'warning')
+        add_edge(sample_id, nid, 'associated family', ', '.join(fam.get('sources') or []))
+
+    iocs = result.get('iocs') or {}
+    details = iocs.get('ioc_details') or {}
+    detail_maps = {
+        'urls': {str(r.get('indicator', '')).lower(): r for r in (details.get('urls') or []) if isinstance(r, dict)},
+        'domains': {str(r.get('indicator', '')).lower(): r for r in (details.get('domains') or []) if isinstance(r, dict)},
+        'ips': {str(r.get('indicator', '')).lower(): r for r in (details.get('ips') or []) if isinstance(r, dict)},
+    }
+    kind_labels = {
+        'urls': 'URL', 'domains': 'Domain', 'ips': 'IP', 'emails': 'Email',
+        'discord_webhooks': 'Discord Webhook', 'telegram': 'Telegram', 'wallets': 'Wallet',
+    }
+
+    for typ in ('urls', 'domains', 'ips', 'emails', 'discord_webhooks', 'telegram', 'wallets'):
         for val in _as_list(iocs.get(typ))[:200]:
-            nid=f'{typ}:{val}'
-            node_type = 'url' if typ=='urls' else ('domain' if typ=='domains' else ('ip' if typ=='ips' else 'ioc'))
-            add_node(nid,val,node_type,{'kind':labels.get(typ, typ)},'info')
-            add_edge(sample_id,nid,'extracts '+labels.get(typ,typ))
-    # enriched infra roles
-    role_labels={
-        'probable_c2':'Probable C2',
-        'payload_delivery':'Payload Delivery',
-        'malware_downloads':'Malware Download',
-        'control_channels':'Control Channel',
-        'exfil_channels':'Exfil Channel',
-        'config_sources':'Config Source',
-        'known_bad_infrastructure':'Known Bad Infrastructure',
+            nid, node_type = _ioc_canonical_id(val) if typ in {'urls', 'domains', 'ips'} else (f'ioc:{typ}:{str(val).lower()}', 'ioc')
+            drow = detail_maps.get(typ, {}).get(str(val).lower(), {})
+            sources = list(drow.get('sources') or [])
+            cti = cti_idx.get(str(val).strip().lower()) or {}
+            vt_sourced = any(str(s).startswith('VirusTotal') for s in sources)
+            sev = 'critical' if cti.get('matched') else ('warning' if vt_sourced else 'info')
+            meta = {
+                'kind': kind_labels.get(typ, typ),
+                'sources': sources or (['static extraction'] if not vt_sourced else []),
+                'vt_contacted': vt_sourced,
+                'cti_status': cti.get('status') or ('not_queried' if typ in {'emails', 'wallets'} else 'not_queried'),
+                'cti_sources': cti.get('sources') or [],
+                'skip_reason': cti.get('skip_reason'),
+            }
+            add_node(nid, str(val), node_type, meta, sev)
+            edge_label = 'vt contacted' if vt_sourced else ('extracts ' + kind_labels.get(typ, typ))
+            add_edge(sample_id, nid, edge_label, 'VirusTotal' if vt_sourced else 'extraction')
+
+    role_labels = {
+        'probable_c2': 'Probable C2',
+        'payload_delivery': 'Payload Delivery',
+        'malware_downloads': 'Malware Download',
+        'control_channels': 'Control Channel',
+        'exfil_channels': 'Exfil Channel',
+        'config_sources': 'Config Source',
+        'known_bad_infrastructure': 'Known Bad Infrastructure',
+        'vt_contacted': 'VT Contacted',
     }
     for bucket, rows in (result.get('infrastructure') or {}).items():
-        if not isinstance(rows,list): continue
+        if not isinstance(rows, list):
+            continue
         for r in rows:
-            ind=r.get('indicator') if isinstance(r,dict) else str(r)
-            nid='infra:'+str(ind)
-            sev='critical' if bucket in {'probable_c2','malware_downloads','known_bad_infrastructure'} else 'warning'
-            add_node(nid,str(ind),'infrastructure',r if isinstance(r,dict) else {},sev)
-            add_edge(sample_id,nid,role_labels.get(bucket,bucket.replace('_',' ')), (r or {}).get('source') if isinstance(r,dict) else None)
-    by_type={}
+            if not isinstance(r, dict):
+                continue
+            ind = r.get('indicator')
+            if not ind:
+                continue
+            nid, node_type = _ioc_canonical_id(str(ind))
+            # Prefer typed IOC nodes over a separate infra duplicate
+            if node_type == 'ioc':
+                nid = 'infra:' + str(ind).lower()
+                node_type = 'infrastructure'
+            cti = cti_idx.get(str(ind).strip().lower()) or {}
+            sev = (
+                'critical' if bucket in {'probable_c2', 'malware_downloads', 'known_bad_infrastructure'} or cti.get('matched')
+                else ('warning' if bucket in {'vt_contacted', 'payload_delivery', 'control_channels', 'exfil_channels'} else 'info')
+            )
+            meta = dict(r)
+            meta['role'] = role_labels.get(bucket, bucket.replace('_', ' '))
+            meta['bucket'] = bucket
+            meta['cti_status'] = cti.get('status') or meta.get('cti_status')
+            meta['cti_sources'] = cti.get('sources') or []
+            sources = list(meta.get('sources') or [])
+            if r.get('source') and r['source'] not in sources:
+                sources.append(r['source'])
+            meta['sources'] = sources
+            add_node(nid, str(ind), node_type if node_type != 'ioc' else 'infrastructure', meta, sev)
+            add_edge(sample_id, nid, role_labels.get(bucket, bucket.replace('_', ' ')), r.get('source'))
+            # Link confirmed infra to malware family nodes
+            for fam in _as_list(r.get('families')) + ([r.get('malware')] if r.get('malware') else []):
+                fid = family_nodes.get(str(fam).lower())
+                if fid:
+                    add_edge(nid, fid, 'associated with', r.get('source'))
+
+    # ThreatFox / URLHaus family ↔ IOC edges from exact matches
+    ti = result.get('threat_intel') or {}
+    for item in (ti.get('threatfox') or {}).get('found') or []:
+        ind = item.get('indicator')
+        nid, _ = _ioc_canonical_id(str(ind or ''))
+        for m in item.get('matches') or []:
+            fam = m.get('malware') or m.get('malware_printable')
+            fid = family_nodes.get(str(fam or '').lower())
+            if fid and nid in seen:
+                add_edge(nid, fid, 'ThreatFox family', 'ThreatFox')
+    for row in (ti.get('urlhaus') or {}).get('results') or []:
+        if not row.get('found'):
+            continue
+        ind = row.get('indicator') or row.get('url') or row.get('host')
+        nid, _ = _ioc_canonical_id(str(ind or ''))
+        for fam in row.get('families') or []:
+            fid = family_nodes.get(str(fam).lower())
+            if fid and nid in seen:
+                add_edge(nid, fid, 'URLHaus family', 'URLHaus')
+
+    by_type: dict[str, int] = {}
+    matched = queried = skipped = vt_n = 0
     for n in nodes:
-        by_type[n['type']]=by_type.get(n['type'],0)+1
-    return {'nodes':nodes,'edges':edges,'summary':{'nodes':len(nodes),'edges':len(edges),'by_type':by_type}}
+        by_type[n['type']] = by_type.get(n['type'], 0) + 1
+        meta = n.get('meta') or {}
+        st = str(meta.get('cti_status') or '')
+        if st == 'matched' or meta.get('matched'):
+            matched += 1
+        elif st in {'queried_not_found'}:
+            queried += 1
+        elif st == 'skipped':
+            skipped += 1
+        if meta.get('vt_contacted') or meta.get('source') == 'VirusTotal' or meta.get('bucket') == 'vt_contacted':
+            vt_n += 1
+
+    return {
+        'nodes': nodes,
+        'edges': edges,
+        'summary': {
+            'nodes': len(nodes),
+            'edges': len(edges),
+            'by_type': by_type,
+            'vt_contacted_nodes': vt_n,
+            'cti_matched_nodes': matched,
+            'cti_queried_no_hit': queried,
+            'cti_skipped_nodes': skipped,
+        },
+        'policy_note': (
+            'CTI is query-only (ThreatFox / URLHaus / Feodo / SSLBL / MalwareBazaar). '
+            'RepoTriage does not submit IOCs or samples to those feeds. '
+            'VT contacted domains are queried on ThreatFox + URLHaus host; Feodo/SSLBL require IPs.'
+        ),
+    }
 
 def discover_related_samples(result: dict) -> dict:
     related=[]

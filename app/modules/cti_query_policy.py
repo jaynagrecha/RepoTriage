@@ -60,10 +60,11 @@ BENIGN_HOSTS = frozenset({
     'android.com',
 })
 
-# Only these extracted buckets are sent to abuse.ch CTI APIs.
+# Only these extracted buckets are sent to abuse.ch CTI APIs by default.
 MALWARE_IOC_BUCKETS = ('urls', 'ips', 'discord_webhooks', 'telegram', 'hashes', 'sha256')
 
-# Domains, emails, wallets are shown in UI but never queried externally.
+# Bare domains stay display-only unless tagged as high-signal (e.g. VirusTotal contacted_*).
+# Emails / wallets remain never-queried.
 
 
 def _norm(value: str) -> str:
@@ -154,8 +155,46 @@ def is_benign_ioc(indicator: str) -> bool:
     return False
 
 
-def select_malware_ioc_candidates(iocs: dict, *, limit: int = 75) -> list[str]:
-    """Return deduplicated IOCs safe to query — malware CTI only, no standalone domains."""
+def _sources_for_indicator(iocs: dict, bucket: str, indicator: str) -> list[str]:
+    details = (iocs or {}).get('ioc_details') or {}
+    rows = details.get(bucket) or []
+    needle = _norm(indicator)
+    out: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if _norm(str(row.get('indicator') or '')) != needle:
+            continue
+        for src in row.get('sources') or []:
+            s = str(src)
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
+def is_vt_sourced_indicator(iocs: dict, bucket: str, indicator: str) -> bool:
+    return any(str(s).startswith('VirusTotal') for s in _sources_for_indicator(iocs, bucket, indicator))
+
+
+def vt_sourced_domains(iocs: dict) -> list[str]:
+    """High-signal domains from VT contacted_* (and hosts derived from contacted URLs)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in (iocs or {}).get('domains') or []:
+        d = _norm(str(raw))
+        if not d or d in seen:
+            continue
+        if is_platform_host(d) or is_benign_host(d) or is_benign_ioc(d):
+            continue
+        if not is_vt_sourced_indicator(iocs, 'domains', d):
+            continue
+        seen.add(d)
+        out.append(d)
+    return out
+
+
+def select_malware_ioc_candidates(iocs: dict, *, limit: int = 75, include_vt_domains: bool = True) -> list[str]:
+    """Return deduplicated IOCs safe to query — malware CTI + optional VT-contacted domains."""
     out: list[str] = []
     seen: set[str] = set()
     for bucket in MALWARE_IOC_BUCKETS:
@@ -172,11 +211,20 @@ def select_malware_ioc_candidates(iocs: dict, *, limit: int = 75) -> list[str]:
             out.append(s)
             if len(out) >= limit:
                 return out
+    if include_vt_domains:
+        for domain in vt_sourced_domains(iocs):
+            key = domain.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(domain)
+            if len(out) >= limit:
+                return out
     return out
 
 
-def should_query_threatfox(indicator: str) -> tuple[bool, str]:
-    """Malware IOC types only: full URL, public IP, file hash, webhook/telegram URL."""
+def should_query_threatfox(indicator: str, *, allow_domain: bool = False) -> tuple[bool, str]:
+    """Malware IOC types: full URL, public IP, file hash, webhook/telegram URL; optional high-signal domain."""
     s = (indicator or '').strip()
     if not s:
         return False, 'empty'
@@ -196,13 +244,15 @@ def should_query_threatfox(indicator: str) -> tuple[bool, str]:
         return True, 'public_ip'
 
     if host and not is_full_url(s):
+        if allow_domain and not is_platform_host(host) and not is_benign_host(host):
+            return True, 'high_signal_domain'
         return False, 'domain_only_not_queried'
 
     return False, 'unsupported_indicator'
 
 
 def should_query_urlhaus(indicator: str) -> tuple[bool, str]:
-    """URLHaus: exact malware-delivery URL only."""
+    """URLHaus URL API: exact malware-delivery URL only."""
     s = (indicator or '').strip()
     if not is_full_url(s):
         return False, 'urlhaus_requires_full_url'
@@ -212,6 +262,18 @@ def should_query_urlhaus(indicator: str) -> tuple[bool, str]:
     if is_platform_host(host):
         return False, 'platform_url'
     return True, 'exact_url'
+
+
+def should_query_urlhaus_host(host: str) -> tuple[bool, str]:
+    """URLHaus host API: high-signal domains (VT contacted) only."""
+    h = _norm(host)
+    if not h or is_full_url(h) or is_public_ip_indicator(h) or is_hash_indicator(h):
+        return False, 'not_a_host'
+    if is_benign_host(h) or is_benign_ioc(h):
+        return False, 'benign_ioc'
+    if is_platform_host(h):
+        return False, 'platform_host'
+    return True, 'high_signal_host'
 
 
 def threatfox_match_is_exact(indicator: str, match_ioc: str) -> bool:
@@ -265,7 +327,11 @@ def count_exact_cti_anchors(result: dict) -> dict[str, int | bool]:
             if str(m.get('infrastructure_role') or '').lower() in {'probable c2'} or str(m.get('threat_type') or '').lower() in {'botnet_cc', 'c2', 'cc'}:
                 exact_c2 += 1
     for row in (ti.get('urlhaus') or {}).get('results') or []:
-        if row.get('found') and is_full_url(str(row.get('indicator') or '')):
+        if not row.get('found'):
+            continue
+        ind = str(row.get('indicator') or row.get('url') or row.get('host') or '')
+        # Count exact URL hits and high-signal host hits (VT contacted domains)
+        if is_full_url(ind) or row.get('indicator_type') in {'domain/host', 'host', 'domain'}:
             exact_uh += 1
     return {
         'vt_malicious': vt_malicious,

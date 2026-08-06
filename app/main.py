@@ -41,8 +41,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.31'
-PLATFORM_VERSION = '4.0.0-alpha.31'
+APP_VERSION = '4.0.0-alpha.32'
+PLATFORM_VERSION = '4.0.0-alpha.32'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -430,8 +430,9 @@ def merge_vt_contacts_into_iocs(iocs: dict, vt_reports: list[dict]) -> dict:
 
 
 def integrate_vt_infrastructure(infra: dict, vt_reports: list[dict]) -> dict:
-    """Surface VT contacted domains/IPs/URLs as probable C2 / staging infrastructure."""
+    """Surface VT contacted_* as staging/contacted infra (not CTI-confirmed C2)."""
     infra = dict(infra or {})
+    infra.setdefault('vt_contacted', [])
     infra.setdefault('probable_c2', [])
     seen = set()
     for bucket, rows in list(infra.items()):
@@ -446,45 +447,47 @@ def integrate_vt_infrastructure(infra: dict, vt_reports: list[dict]) -> dict:
         permalink = report.get('permalink')
         for domain in report.get('contacted_domains') or []:
             indicator = str(domain).strip().lower()
-            key = ('probable_c2', indicator)
+            key = ('vt_contacted', indicator)
             if not indicator or key in seen:
                 continue
             seen.add(key)
-            infra['probable_c2'].append({
+            infra['vt_contacted'].append({
                 'indicator': indicator,
                 'type': 'VT Contacted Domain',
-                'confidence': 'High',
+                'severity': 'Medium',
                 'source': 'VirusTotal',
                 'reference': permalink,
+                'cti_note': 'Queried on ThreatFox + URLHaus host API; Feodo/SSLBL need IPs',
             })
         for ip in report.get('contacted_ips') or []:
             indicator = str(ip).strip()
-            key = ('probable_c2', indicator.lower())
+            key = ('vt_contacted', indicator.lower())
             if not indicator or key in seen:
                 continue
             seen.add(key)
-            infra['probable_c2'].append({
+            infra['vt_contacted'].append({
                 'indicator': indicator,
                 'type': 'VT Contacted IP',
-                'confidence': 'High',
+                'severity': 'Medium',
                 'source': 'VirusTotal',
                 'reference': permalink,
+                'cti_note': 'Checked against ThreatFox + FeodoTracker + SSLBL feeds',
             })
         for url in report.get('contacted_urls') or []:
             indicator = str(url).strip()
-            key = ('probable_c2', indicator.lower())
+            key = ('vt_contacted', indicator.lower())
             if not indicator or key in seen:
                 continue
             seen.add(key)
-            infra['probable_c2'].append({
+            infra['vt_contacted'].append({
                 'indicator': indicator,
                 'type': 'VT Contacted URL',
-                'confidence': 'Medium',
+                'severity': 'Medium',
                 'source': 'VirusTotal',
                 'reference': permalink,
+                'cti_note': 'Queried on ThreatFox + URLHaus URL API',
             })
     return infra
-
 
 def integrate_threatfox_infrastructure(infra: dict, threatfox: dict) -> dict:
     """Merge ThreatFox classifications into the Infrastructure tab."""
@@ -556,6 +559,7 @@ def integrate_abusech_infrastructure(infra: dict, urlhaus: dict, feodo: dict, ss
     for row in (urlhaus or {}).get('results', []) or []:
         if not row.get('found'):
             continue
+        is_host = str(row.get('indicator_type') or '') in {'domain/host', 'host', 'domain'}
         indicator = row.get('url') or row.get('indicator') or row.get('host')
         bucket = 'payload_delivery'
         key = (bucket, str(indicator).lower())
@@ -563,13 +567,20 @@ def integrate_abusech_infrastructure(infra: dict, urlhaus: dict, feodo: dict, ss
             seen.add(key)
             infra[bucket].append({
                 'indicator': indicator,
-                'type': 'Payload Delivery / Malware URL',
+                'type': (
+                    'URLHaus Host Match'
+                    if is_host else
+                    'Payload Delivery / Malware URL'
+                ),
                 'confidence': 'High',
                 'source': 'URLHaus',
                 'threat': row.get('threat'),
                 'families': row.get('families'),
                 'status': row.get('url_status'),
-                'reference': row.get('link'),
+                'url_count': row.get('url_count'),
+                'reference': row.get('link') or (
+                    f"https://urlhaus.abuse.ch/host/{indicator}/" if is_host and indicator else None
+                ),
             })
 
     for row in (feodo or {}).get('matches', []) or []:
