@@ -92,6 +92,32 @@ MAX_CACHED_FILE_BYTES=50000000
 
 **Production note:** Install `radare2` on the worker for deepest disassembly/decompilation. Without r2, PE/ELF analysis falls back to Capstone + pefile.
 
+### v4.0.0-alpha.21 — Repo hunt + SMTP alerts (JsOutProx)
+
+Automated discovery of new JS droppers matching your LiveHunt-style JsOutProx rule, with VT confirm and mailbox alerts.
+
+**Discovery (all three)**
+1. GitHub code search (`REPO_HUNT_SEARCH_QUERY`)
+2. Watched orgs/users (`REPO_HUNT_GITHUB_ORGS` / `REPO_HUNT_GITHUB_USERS`)
+3. Webhook ingest from RepoTrace: `POST /api/repo-hunt/ingest` + `x-repo-hunt-secret`
+
+**Detection**
+- Local prefilter: size 500KB–1MB + all six JsOutProx strings
+- VT confirm via file report + optional `VT_LIVEHUNT_RULE_ID` linkage
+
+**Email**
+- SMTP (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `REPO_HUNT_TO_EMAIL`)
+
+**Run**
+```bash
+# cron / one-shot
+python scripts/repo_hunt_worker.py
+
+# admin
+curl -X POST -H "x-admin-bypass-token: $ADMIN_BYPASS_TOKEN" \
+  'https://YOUR_HOST/api/admin/repo-hunt/run'
+```
+
 ### v4.0.0-alpha.20 — CTI live proof
 
 - Fixture + unit tests prove ThreatFox/URLHaus exact matches flow into Infrastructure (probable C2 / payload delivery).

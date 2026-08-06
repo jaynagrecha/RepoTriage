@@ -27,6 +27,7 @@ from .modules.malwarebazaar import enrich_files as enrich_malwarebazaar
 from .modules.urlhaus import enrich_iocs as enrich_urlhaus
 from .modules.abusech_connector import enrich_feodo, enrich_sslbl, abusech_summary, abusech_key
 from .modules.cti_selftest import run_cti_selftest
+from .modules.repo_hunt import HuntState, RepoHuntConfig, run_repo_hunt
 from .modules.mitre_mapper import map_mitre
 from .modules.narrative import generate_attack_narrative
 from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
@@ -38,8 +39,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.20'
-PLATFORM_VERSION = '4.0.0-alpha.20'
+APP_VERSION = '4.0.0-alpha.21'
+PLATFORM_VERSION = '4.0.0-alpha.21'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -428,6 +429,72 @@ async def cti_selftest(request: Request):
     report = await run_cti_selftest(BASE_DIR)
     status = 200 if report.get('ok') else 503
     return JSONResponse(report, status_code=status)
+
+
+class RepoHuntIngestRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+    repo: str | None = None
+    path: str | None = None
+    html_url: str | None = None
+    src: str | None = 'repotrace'
+
+    @field_validator('url')
+    @classmethod
+    def strip_url(cls, value: str) -> str:
+        return (value or '').strip()
+
+
+def _require_repo_hunt_webhook(request: Request) -> None:
+    cfg = RepoHuntConfig.from_env()
+    expected = (cfg.webhook_secret or '').strip()
+    provided = (request.headers.get('x-repo-hunt-secret') or request.headers.get('x-webhook-secret') or '').strip()
+    if not expected or provided != expected:
+        raise HTTPException(status_code=401, detail='Invalid repo-hunt webhook secret')
+
+
+@app.post('/api/repo-hunt/ingest')
+async def repo_hunt_ingest(req: RepoHuntIngestRequest, request: Request):
+    """A3 — RepoTrace / external handoff into the hunt queue."""
+    _require_repo_hunt_webhook(request)
+    state = HuntState(BASE_DIR)
+    state.enqueue_webhook({
+        'url': req.url,
+        'repo': req.repo,
+        'path': req.path,
+        'html_url': req.html_url or req.url,
+        'src': req.src or 'repotrace',
+        'ingested_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'ok': True, 'queued': True, 'url': req.url}
+
+
+@app.post('/api/admin/repo-hunt/run')
+async def repo_hunt_run(request: Request, send: bool = True):
+    """Admin trigger for discovery → local JsOutProx prefilter → VT confirm → SMTP."""
+    _require_admin(request)
+    report = await run_repo_hunt(BASE_DIR, send=send)
+    status = 200 if report.get('ok') else 503
+    return JSONResponse(report, status_code=status)
+
+
+@app.get('/api/admin/repo-hunt/status')
+async def repo_hunt_status(request: Request):
+    _require_admin(request)
+    cfg = RepoHuntConfig.from_env()
+    state = HuntState(BASE_DIR)
+    return {
+        'enabled': cfg.enabled,
+        'smtp_ready': cfg.smtp_ready(),
+        'github_token': bool(cfg.github_token),
+        'vt_confirm': cfg.vt_confirm,
+        'vt_configured': bool(cfg.vt_api_key),
+        'livehunt_rule_id': cfg.vt_livehunt_rule_id or None,
+        'watched_orgs': cfg.github_orgs,
+        'watched_users': cfg.github_users,
+        'webhook_secret_configured': bool(cfg.webhook_secret),
+        'queue_depth': len(state._load(state.queue_path, []) or []),
+        'last_run': state.last_run(),
+    }
 
 
 async def _run_job(job_id: str, req: AnalyzeRequest) -> None:
