@@ -98,7 +98,7 @@ class TestVtFamilyAndNames(unittest.TestCase):
         self.assertIn('sleestakk_payload_1.js', report['names'])
         self.assertEqual(report['popular_threat_label'], 'trojan.remcos/malcode')
         self.assertEqual(report['family_labels'], ['remcos', 'malcode', 'sonbokil'])
-        self.assertEqual(report['schema'], 2)
+        self.assertEqual(report['schema'], 3)
 
     def test_vt_inventory_fields(self):
         fields = _vt_inventory_fields({
@@ -178,10 +178,21 @@ class TestVtContactsEnrich(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['contacted_domains'], ['deubsjoinpawmderl.ddns.net'])
         self.assertEqual(result['contacted_ips'], ['178.255.148.207'])
         self.assertTrue(result['contacts_fetched'])
+        self.assertTrue(result['relations_fetched'])
+        self.assertEqual(result['schema'], 3)
 
-        # Second call should use cache and not re-fetch contacts when contacts_fetched
-        report = {'status': 'found', 'sha256': sha, 'contacts_fetched': True, 'contacted_domains': ['x.com'], 'contacted_ips': []}
-        out = await enrich_vt_contacts(report, Path(tmp))
+        # Second call should skip re-fetch when relations already populated (schema >= 3)
+        report = {
+            'status': 'found',
+            'sha256': sha,
+            'schema': 3,
+            'relations_fetched': True,
+            'contacts_fetched': True,
+            'contacted_domains': ['x.com'],
+            'contacted_ips': [],
+            'relations': {},
+        }
+        out = await enrich_vt_contacts(report, Path(tempfile.gettempdir()))
         self.assertEqual(out['contacted_domains'], ['x.com'])
 
 
