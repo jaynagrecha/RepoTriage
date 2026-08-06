@@ -1,8 +1,13 @@
 from __future__ import annotations
+
 from pathlib import Path
 from urllib.parse import urlparse, unquote, quote
-import os, re, uuid
+import os
+import re
+import uuid
+
 import httpx
+
 
 class DownloadError(Exception):
     pass
@@ -15,12 +20,27 @@ ALLOWED_DOWNLOAD_HOSTS = frozenset({
     'raw.githubusercontent.com',
     'objects.githubusercontent.com',
     'codeload.github.com',
+    'gist.github.com',
+    'gist.githubusercontent.com',
     'gitlab.com',
     'www.gitlab.com',
 })
 
 _GITLAB_BLOB_MARKER = '/-/blob/'
 _GITLAB_RAW_MARKER = '/-/raw/'
+_GITLAB_TREE_MARKER = '/-/tree/'
+
+_ARCHIVE_SUFFIXES = (
+    '.7z', '.zip', '.rar', '.tar', '.tar.gz', '.tgz', '.gz', '.bz2', '.xz', '.cab',
+    '.iso', '.img', '.dmg', '.apk', '.msi', '.exe', '.dll', '.js', '.vbs', '.ps1',
+    '.bat', '.cmd', '.scr', '.jar', '.war', '.doc', '.docm', '.xls', '.xlsm', '.pptm',
+    '.pdf', '.rtf', '.hta', '.lnk', '.wsf', '.jse',
+)
+_SKIP_ROOT_NAMES = frozenset({
+    'readme', 'readme.md', 'readme.txt', 'license', 'license.md', 'licence', 'licence.md',
+    '.gitignore', '.gitattributes', '.editorconfig', 'code_of_conduct.md', 'security.md',
+    'contributing.md', 'changelog.md', 'changes.md',
+})
 
 
 def _gitlab_base_host() -> str | None:
@@ -43,6 +63,14 @@ def _is_gitlab_host(host: str) -> bool:
     return host in _configured_gitlab_hosts()
 
 
+def _is_github_host(host: str) -> bool:
+    host = (host or '').lower().split(':', 1)[0]
+    return host in {
+        'github.com', 'www.github.com', 'raw.githubusercontent.com',
+        'gist.github.com', 'gist.githubusercontent.com',
+    }
+
+
 def _allowed_download_host(host: str, *, source_host: str | None = None) -> bool:
     host = (host or '').lower().split(':', 1)[0]
     if host in ALLOWED_DOWNLOAD_HOSTS:
@@ -56,22 +84,40 @@ def _allowed_download_host(host: str, *, source_host: str | None = None) -> bool
     return False
 
 
-def _split_gitlab_ref_and_path(segments: list[str]) -> tuple[str, str]:
-    if len(segments) < 2:
-        raise DownloadError('Invalid GitLab file URL: missing ref or file path')
-    if len(segments) >= 3 and segments[0] == 'refs' and segments[1] == 'heads':
-        ref = '/'.join(segments[:3])
+def _github_token() -> str:
+    return (os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN') or '').strip()
+
+
+def _gitlab_token() -> str:
+    return (os.getenv('GITLAB_TOKEN') or '').strip()
+
+
+def _split_ref_and_path(segments: list[str]) -> tuple[str, str]:
+    """Split URL segments after blob/raw/tree into (ref, file_or_dir_path)."""
+    if not segments:
+        raise DownloadError('Invalid URL: missing ref')
+    if len(segments) >= 3 and segments[0] == 'refs' and segments[1] in {'heads', 'tags'}:
+        # Prefer short ref name for raw.githubusercontent.com / GitLab raw compatibility
+        ref = segments[2]
         file_path = '/'.join(segments[3:])
     else:
         ref = segments[0]
         file_path = '/'.join(segments[1:])
-    if not ref or not file_path:
+    if not ref:
+        raise DownloadError('Invalid URL: missing ref')
+    return ref, file_path
+
+
+def _split_gitlab_ref_and_path(segments: list[str]) -> tuple[str, str]:
+    if len(segments) < 2:
+        raise DownloadError('Invalid GitLab file URL: missing ref or file path')
+    ref, file_path = _split_ref_and_path(segments)
+    if not file_path:
         raise DownloadError('Invalid GitLab file URL: missing ref or file path')
     return ref, file_path
 
 
 def _gitlab_owner_repo(project_path: str) -> tuple[str, str]:
-    """Split GitLab project path into owner (group/namespace) + repo (last segment)."""
     parts = [p for p in (project_path or '').split('/') if p]
     if not parts:
         return '', ''
@@ -91,70 +137,27 @@ def _gitlab_raw_url(host: str, project_path: str, ref: str, file_path: str) -> s
     return f'{scheme}://{host}/{project_path}/-/raw/{ref}/{file_path}'
 
 
-def normalize_gitlab_file_url(url: str) -> dict:
-    url = url.strip()
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().split(':', 1)[0]
-    path = parsed.path
-
-    if not _is_gitlab_host(host):
-        raise DownloadError('GitLab host is not allowed. Configure GITLAB_BASE_URL for self-hosted instances.')
-
-    marker = None
-    if _GITLAB_BLOB_MARKER in path:
-        marker = _GITLAB_BLOB_MARKER
-    elif _GITLAB_RAW_MARKER in path:
-        marker = _GITLAB_RAW_MARKER
-    else:
-        raise DownloadError('Only GitLab blob and raw file URLs are supported')
-
-    prefix, rest = path.split(marker, 1)
-    project_path = prefix.strip('/')
-    if not project_path:
-        raise DownloadError('Invalid GitLab file URL: missing project path')
-
-    ref, file_path = _split_gitlab_ref_and_path([part for part in rest.strip('/').split('/') if part])
-    raw_url = _gitlab_raw_url(host, project_path, ref, file_path)
-    source_type = 'gitlab_blob' if marker == _GITLAB_BLOB_MARKER else 'gitlab_raw'
-    owner, repo = _gitlab_owner_repo(project_path)
-
-    return {
-        'provider': 'gitlab',
-        'source_type': source_type,
-        'host': host,
-        'project': project_path,
-        'owner': owner,
-        'repo': repo,
-        'ref': ref,
-        'branch': ref,
-        'path': file_path,
-        'download_url': raw_url,
-        'display_url': url,
-    }
-
-
-_ARCHIVE_SUFFIXES = (
-    '.7z', '.zip', '.rar', '.tar', '.tar.gz', '.tgz', '.gz', '.bz2', '.xz', '.cab',
-    '.iso', '.img', '.dmg', '.apk', '.msi', '.exe', '.dll', '.js', '.vbs', '.ps1',
-    '.bat', '.cmd', '.scr', '.jar', '.war', '.doc', '.docm', '.xls', '.xlsm', '.pptm',
-)
-_SKIP_ROOT_NAMES = frozenset({
-    'readme', 'readme.md', 'readme.txt', 'license', 'license.md', 'licence', 'licence.md',
-    '.gitignore', '.gitattributes', '.editorconfig', 'code_of_conduct.md', 'security.md',
-    'contributing.md', 'changelog.md', 'changes.md',
-})
-
-
 def _looks_like_payload_name(name: str) -> bool:
     n = (name or '').lower()
     return any(n.endswith(suf) for suf in _ARCHIVE_SUFFIXES)
 
 
-def _pick_github_repo_file(entries: list, *, prefer_name: str | None = None) -> dict:
-    """Choose a single downloadable payload from a GitHub Contents API directory listing."""
+def _pick_repo_file(entries: list, *, prefer_name: str | None = None, provider: str = 'GitHub') -> dict:
+    """Choose a single downloadable payload from a directory listing."""
     files = [e for e in entries if isinstance(e, dict) and e.get('type') == 'file' and e.get('name')]
+    # GitLab tree API uses type=blob
     if not files:
-        raise DownloadError('GitHub repository root has no downloadable files (only directories?). Paste a blob/raw file URL.')
+        files = [
+            e for e in entries
+            if isinstance(e, dict) and e.get('type') == 'blob' and e.get('name')
+        ]
+        for e in files:
+            e.setdefault('type', 'file')
+    if not files:
+        raise DownloadError(
+            f'{provider} path has no downloadable files (only directories?). '
+            'Paste a direct blob/raw file URL.'
+        )
 
     prefer = (prefer_name or '').strip().lower()
     if prefer:
@@ -176,9 +179,113 @@ def _pick_github_repo_file(entries: list, *, prefer_name: str | None = None) -> 
 
     names = ', '.join(str(f.get('name')) for f in files[:15])
     raise DownloadError(
-        'GitHub repository has multiple files — paste a specific blob/raw URL. '
-        f'Root candidates: {names}'
+        f'{provider} path has multiple files — paste a specific blob/raw URL. '
+        f'Candidates: {names}'
     )
+
+
+# Back-compat alias used by tests
+def _pick_github_repo_file(entries: list, *, prefer_name: str | None = None) -> dict:
+    return _pick_repo_file(entries, prefer_name=prefer_name, provider='GitHub')
+
+
+def normalize_gitlab_file_url(url: str) -> dict:
+    url = url.strip()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().split(':', 1)[0]
+    path = parsed.path
+
+    if not _is_gitlab_host(host):
+        raise DownloadError('GitLab host is not allowed. Configure GITLAB_BASE_URL for self-hosted instances.')
+
+    # Direct file links
+    for marker, source_type in (
+        (_GITLAB_BLOB_MARKER, 'gitlab_blob'),
+        (_GITLAB_RAW_MARKER, 'gitlab_raw'),
+    ):
+        if marker in path:
+            prefix, rest = path.split(marker, 1)
+            project_path = prefix.strip('/')
+            if not project_path:
+                raise DownloadError('Invalid GitLab file URL: missing project path')
+            ref, file_path = _split_gitlab_ref_and_path([p for p in rest.strip('/').split('/') if p])
+            owner, repo = _gitlab_owner_repo(project_path)
+            return {
+                'provider': 'gitlab',
+                'source_type': source_type,
+                'host': host,
+                'project': project_path,
+                'owner': owner,
+                'repo': repo,
+                'ref': ref,
+                'branch': ref,
+                'path': file_path,
+                'download_url': _gitlab_raw_url(host, project_path, ref, file_path),
+                'display_url': url,
+            }
+
+    # Tree / directory browse → resolve to a file
+    if _GITLAB_TREE_MARKER in path:
+        prefix, rest = path.split(_GITLAB_TREE_MARKER, 1)
+        project_path = prefix.strip('/')
+        if not project_path:
+            raise DownloadError('Invalid GitLab tree URL: missing project path')
+        segments = [p for p in rest.strip('/').split('/') if p]
+        if not segments:
+            raise DownloadError('Invalid GitLab tree URL: missing ref')
+        ref, subpath = _split_ref_and_path(segments)
+        owner, repo = _gitlab_owner_repo(project_path)
+        return {
+            'provider': 'gitlab',
+            'source_type': 'gitlab_tree',
+            'host': host,
+            'project': project_path,
+            'owner': owner,
+            'repo': repo,
+            'ref': ref,
+            'branch': ref,
+            'path': subpath,
+            'download_url': '',
+            'display_url': url,
+            'needs_resolve': True,
+        }
+
+    # Project root / nested group project (no -/… marker)
+    # Reject known non-file GitLab pages under the project.
+    parts = [p for p in path.strip('/').split('/') if p]
+    if not parts:
+        raise DownloadError('Invalid GitLab URL: missing project path')
+    blocked = {
+        'issues', 'merge_requests', 'pipelines', 'jobs', 'wikis', 'snippets',
+        'settings', 'activity', 'members', 'labels', 'milestones', 'boards',
+    }
+    if '-/' in path:
+        # Unknown -/ resource (e.g. commits, jobs) — not a hosted file
+        raise DownloadError(
+            'Unsupported GitLab URL. Use blob/raw file URL, tree URL, or project URL '
+            '(https://gitlab.com/group/project).'
+        )
+    if any(p in blocked for p in parts):
+        raise DownloadError(
+            'Unsupported GitLab URL (not a file host). Use blob/raw, tree, or project URL.'
+        )
+
+    project_path = '/'.join(parts)
+    owner, repo = _gitlab_owner_repo(project_path)
+    return {
+        'provider': 'gitlab',
+        'source_type': 'gitlab_project',
+        'host': host,
+        'project': project_path,
+        'owner': owner,
+        'repo': repo,
+        'ref': None,
+        'branch': None,
+        'path': '',
+        'download_url': '',
+        'display_url': url,
+        'needs_resolve': True,
+    }
 
 
 def normalize_github_file_url(url: str) -> dict:
@@ -187,12 +294,68 @@ def normalize_github_file_url(url: str) -> dict:
     host = parsed.netloc.lower().split(':', 1)[0]
     path = parsed.path
 
+    # gist.githubusercontent.com/<user>/<id>/raw/<commit>/<file>
+    if host == 'gist.githubusercontent.com':
+        parts = [p for p in path.strip('/').split('/') if p]
+        if len(parts) < 5 or parts[2] != 'raw':
+            raise DownloadError('Invalid gist.githubusercontent.com URL')
+        return {
+            'provider': 'github',
+            'source_type': 'github_gist_raw',
+            'owner': parts[0],
+            'repo': parts[1],
+            'branch': parts[3],
+            'path': '/'.join(parts[4:]),
+            'download_url': url.split('?', 1)[0],
+            'display_url': url,
+            'gist_id': parts[1],
+        }
+
+    # gist.github.com/<user>/<id>[/…]
+    if host == 'gist.github.com':
+        parts = [p for p in path.strip('/').split('/') if p]
+        if len(parts) < 2:
+            raise DownloadError('Invalid gist.github.com URL')
+        owner, gist_id = parts[0], parts[1]
+        # Direct raw link on gist.github.com
+        if len(parts) >= 4 and parts[2] == 'raw':
+            # /user/id/raw/<file> or /user/id/raw/<commit>/<file>
+            rest = parts[3:]
+            file_path = rest[-1] if rest else ''
+            return {
+                'provider': 'github',
+                'source_type': 'github_gist_raw',
+                'owner': owner,
+                'repo': gist_id,
+                'branch': None,
+                'path': file_path,
+                'download_url': f'https://gist.githubusercontent.com/{owner}/{gist_id}/raw/{("/".join(rest) if rest else "")}'.rstrip('/'),
+                'display_url': url,
+                'gist_id': gist_id,
+            }
+        return {
+            'provider': 'github',
+            'source_type': 'github_gist',
+            'owner': owner,
+            'repo': gist_id,
+            'branch': None,
+            'path': '',
+            'download_url': '',
+            'display_url': url,
+            'gist_id': gist_id,
+            'needs_resolve': True,
+        }
+
     if host == 'raw.githubusercontent.com':
-        parts = path.strip('/').split('/')
+        parts = [p for p in path.strip('/').split('/') if p]
         if len(parts) < 4:
             raise DownloadError('Invalid raw.githubusercontent.com URL')
-        owner, repo, branch = parts[0], parts[1], parts[2]
-        file_path = '/'.join(parts[3:])
+        owner, repo = parts[0], parts[1]
+        rest = parts[2:]
+        branch, file_path = _split_ref_and_path(rest)
+        if not file_path:
+            raise DownloadError('Invalid raw.githubusercontent.com URL: missing file path')
+        raw = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
         return {
             'provider': 'github',
             'source_type': 'github_raw',
@@ -200,111 +363,139 @@ def normalize_github_file_url(url: str) -> dict:
             'repo': repo,
             'branch': branch,
             'path': file_path,
-            'download_url': url,
+            'download_url': raw,
             'display_url': url,
         }
 
-    if host in {'github.com', 'www.github.com'}:
-        parts = [p for p in path.strip('/').split('/') if p]
-        if len(parts) >= 5 and parts[2] == 'blob':
-            owner, repo, branch = parts[0], parts[1], parts[3]
-            file_path = '/'.join(parts[4:])
-            raw = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
-            return {
-                'provider': 'github',
-                'source_type': 'github_blob',
-                'owner': owner,
-                'repo': repo,
-                'branch': branch,
-                'path': file_path,
-                'download_url': raw,
-                'display_url': url,
-            }
-        if len(parts) >= 7 and parts[2] == 'raw' and parts[3] == 'refs' and parts[4] == 'heads':
-            owner, repo, branch = parts[0], parts[1], parts[5]
-            file_path = '/'.join(parts[6:])
-            raw = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
-            return {
-                'provider': 'github',
-                'source_type': 'github_raw_refs_heads',
-                'owner': owner,
-                'repo': repo,
-                'branch': branch,
-                'path': file_path,
-                'download_url': raw,
-                'display_url': url,
-            }
-        if len(parts) >= 5 and parts[2] == 'raw':
-            owner, repo, branch = parts[0], parts[1], parts[3]
-            file_path = '/'.join(parts[4:])
-            raw = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
-            return {
-                'provider': 'github',
-                'source_type': 'github_raw_path',
-                'owner': owner,
-                'repo': repo,
-                'branch': branch,
-                'path': file_path,
-                'download_url': raw,
-                'display_url': url,
-            }
-        if len(parts) >= 5 and parts[2] == 'releases' and parts[3] == 'download':
-            owner = parts[0]
-            repo = parts[1]
-            file_path = parts[-1] if parts else 'download.bin'
-            return {
-                'provider': 'github',
-                'source_type': 'github_release_asset',
-                'owner': owner,
-                'repo': repo,
-                'branch': None,
-                'path': file_path,
-                'download_url': url,
-                'display_url': url,
-            }
-        # github.com/owner/repo[/] — resolve via API to a root payload file
-        if len(parts) == 2:
-            owner, repo = parts[0], parts[1]
-            return {
-                'provider': 'github',
-                'source_type': 'github_repo',
-                'owner': owner,
-                'repo': repo,
-                'branch': None,
-                'path': '',
-                'download_url': '',
-                'display_url': url,
-                'needs_resolve': True,
-            }
-        # github.com/owner/repo/tree/<ref>[/subdir...]
-        if len(parts) >= 4 and parts[2] == 'tree':
-            owner, repo = parts[0], parts[1]
-            rest = parts[3:]
-            if len(rest) >= 3 and rest[0] == 'refs' and rest[1] == 'heads':
-                branch = '/'.join(rest[:3])
-                subpath = '/'.join(rest[3:])
-            else:
-                branch = rest[0]
-                subpath = '/'.join(rest[1:])
-            return {
-                'provider': 'github',
-                'source_type': 'github_tree',
-                'owner': owner,
-                'repo': repo,
-                'branch': branch,
-                'path': subpath,
-                'download_url': '',
-                'display_url': url,
-                'needs_resolve': True,
-            }
+    if host not in {'github.com', 'www.github.com'}:
+        raise DownloadError(
+            'Unsupported GitHub URL host. Use github.com, raw.githubusercontent.com, or gist.github.com.'
+        )
+
+    parts = [p for p in path.strip('/').split('/') if p]
+
+    # owner/repo/blob/<ref>/path
+    if len(parts) >= 4 and parts[2] == 'blob':
+        owner, repo = parts[0], parts[1]
+        branch, file_path = _split_ref_and_path(parts[3:])
+        if not file_path:
+            raise DownloadError('Invalid GitHub blob URL: missing file path')
+        raw = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
+        return {
+            'provider': 'github',
+            'source_type': 'github_blob',
+            'owner': owner,
+            'repo': repo,
+            'branch': branch,
+            'path': file_path,
+            'download_url': raw,
+            'display_url': url,
+        }
+
+    # owner/repo/raw/<ref>/path  (includes refs/heads)
+    if len(parts) >= 4 and parts[2] == 'raw':
+        owner, repo = parts[0], parts[1]
+        branch, file_path = _split_ref_and_path(parts[3:])
+        if not file_path:
+            raise DownloadError('Invalid GitHub raw URL: missing file path')
+        raw = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
+        return {
+            'provider': 'github',
+            'source_type': 'github_raw_path',
+            'owner': owner,
+            'repo': repo,
+            'branch': branch,
+            'path': file_path,
+            'download_url': raw,
+            'display_url': url,
+        }
+
+    # owner/repo/releases/download/tag/asset  OR  releases/latest/download/asset
+    if len(parts) >= 5 and parts[2] == 'releases' and 'download' in parts:
+        owner, repo = parts[0], parts[1]
+        file_path = parts[-1]
+        return {
+            'provider': 'github',
+            'source_type': 'github_release_asset',
+            'owner': owner,
+            'repo': repo,
+            'branch': None,
+            'path': file_path,
+            'download_url': url.split('?', 1)[0],
+            'display_url': url,
+        }
+
+    # owner/repo/archive/<ref>.zip|.tar.gz  (repo archive is a hosted file)
+    if len(parts) >= 4 and parts[2] == 'archive':
+        owner, repo = parts[0], parts[1]
+        archive_name = '/'.join(parts[3:])
+        return {
+            'provider': 'github',
+            'source_type': 'github_archive',
+            'owner': owner,
+            'repo': repo,
+            'branch': None,
+            'path': archive_name,
+            'download_url': url.split('?', 1)[0],
+            'display_url': url,
+        }
+
+    # owner/repo/tree/<ref>[/subdir]
+    if len(parts) >= 4 and parts[2] == 'tree':
+        owner, repo = parts[0], parts[1]
+        branch, subpath = _split_ref_and_path(parts[3:])
+        return {
+            'provider': 'github',
+            'source_type': 'github_tree',
+            'owner': owner,
+            'repo': repo,
+            'branch': branch,
+            'path': subpath,
+            'download_url': '',
+            'display_url': url,
+            'needs_resolve': True,
+        }
+
+    # owner/repo  (repository root)
+    if len(parts) == 2:
+        owner, repo = parts[0], parts[1]
+        return {
+            'provider': 'github',
+            'source_type': 'github_repo',
+            'owner': owner,
+            'repo': repo,
+            'branch': None,
+            'path': '',
+            'download_url': '',
+            'display_url': url,
+            'needs_resolve': True,
+        }
 
     raise DownloadError(
-        'Unsupported GitHub URL format. Use a file blob/raw URL, a release asset URL, '
-        'or a repository URL (https://github.com/owner/repo).'
+        'Unsupported GitHub URL. Use blob/raw file URL, release asset, archive download, '
+        'gist, tree, or repository URL (https://github.com/owner/repo).'
     )
 
 
-async def _github_api_json(client: httpx.AsyncClient, url: str, headers: dict[str, str]) -> tuple[int, dict | list]:
+def normalize_file_url(url: str) -> dict:
+    url = (url or '').strip()
+    if not url:
+        raise DownloadError('file_url is required')
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().split(':', 1)[0]
+    path = parsed.path
+
+    if _is_gitlab_host(host) or _GITLAB_BLOB_MARKER in path or _GITLAB_RAW_MARKER in path or _GITLAB_TREE_MARKER in path:
+        return normalize_gitlab_file_url(url)
+    if _is_github_host(host):
+        return normalize_github_file_url(url)
+    raise DownloadError(
+        'Unsupported URL host. RepoTriage accepts GitHub and GitLab URLs that host a file '
+        '(blob/raw/tree/repo/gist/release/archive).'
+    )
+
+
+async def _api_json(client: httpx.AsyncClient, url: str, headers: dict[str, str]) -> tuple[int, dict | list]:
     resp = await client.get(url, headers=headers)
     try:
         payload = resp.json()
@@ -314,9 +505,13 @@ async def _github_api_json(client: httpx.AsyncClient, url: str, headers: dict[st
 
 
 async def resolve_github_repo_url(meta: dict) -> dict:
-    """Resolve github.com/owner/repo (or /tree/...) to a concrete file download target."""
+    """Resolve github.com/owner/repo, /tree/..., or gist to a concrete file download."""
     if not meta.get('needs_resolve'):
         return meta
+
+    if meta.get('source_type') == 'github_gist' or meta.get('gist_id'):
+        return await _resolve_github_gist(meta)
+
     owner = (meta.get('owner') or '').strip()
     repo = (meta.get('repo') or '').strip()
     if not owner or not repo:
@@ -334,9 +529,7 @@ async def resolve_github_repo_url(meta: dict) -> dict:
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         branch = (meta.get('branch') or '').strip() or None
         if not branch:
-            status, repo_info = await _github_api_json(
-                client, f'https://api.github.com/repos/{owner}/{repo}', headers
-            )
+            status, repo_info = await _api_json(client, f'https://api.github.com/repos/{owner}/{repo}', headers)
             if status == 404:
                 hint = ' (private repo — set GITHUB_TOKEN)' if not token else ''
                 raise DownloadError(f'GitHub repository not found or inaccessible: {owner}/{repo}{hint}')
@@ -355,7 +548,7 @@ async def resolve_github_repo_url(meta: dict) -> dict:
             contents_url += '/' + quote(dir_path, safe='/')
         contents_url += f'?ref={quote(branch, safe="")}'
 
-        status, listing = await _github_api_json(client, contents_url, headers)
+        status, listing = await _api_json(client, contents_url, headers)
         if status == 404:
             raise DownloadError(
                 f'GitHub path not found in {owner}/{repo} @ {branch}'
@@ -369,7 +562,7 @@ async def resolve_github_repo_url(meta: dict) -> dict:
         if isinstance(listing, dict) and listing.get('type') == 'file':
             picked = listing
         elif isinstance(listing, list):
-            picked = _pick_github_repo_file(listing, prefer_name=repo)
+            picked = _pick_repo_file(listing, prefer_name=repo, provider='GitHub')
         else:
             raise DownloadError(f'Unexpected GitHub Contents API response for {owner}/{repo}')
 
@@ -394,35 +587,150 @@ async def resolve_github_repo_url(meta: dict) -> dict:
     return resolved
 
 
-def normalize_file_url(url: str) -> dict:
-    url = url.strip()
-    if not url:
-        raise DownloadError('file_url is required')
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().split(':', 1)[0]
-    path = parsed.path
+async def _resolve_github_gist(meta: dict) -> dict:
+    gist_id = (meta.get('gist_id') or meta.get('repo') or '').strip()
+    if not gist_id:
+        raise DownloadError('Invalid GitHub gist URL')
+    headers = {
+        'User-Agent': 'RepoTriage',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    token = _github_token()
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
 
-    if _is_gitlab_host(host) or _GITLAB_BLOB_MARKER in path or _GITLAB_RAW_MARKER in path:
-        return normalize_gitlab_file_url(url)
-    return normalize_github_file_url(url)
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        status, data = await _api_json(client, f'https://api.github.com/gists/{gist_id}', headers)
+    if status == 404:
+        raise DownloadError(f'GitHub gist not found or inaccessible: {gist_id}')
+    if status >= 400 or not isinstance(data, dict):
+        raise DownloadError(f'GitHub gist lookup failed (HTTP {status})')
+
+    files = data.get('files') or {}
+    if not isinstance(files, dict) or not files:
+        raise DownloadError(f'GitHub gist {gist_id} has no files')
+
+    entries = []
+    for name, info in files.items():
+        if not isinstance(info, dict):
+            continue
+        entries.append({
+            'type': 'file',
+            'name': name,
+            'path': name,
+            'size': int(info.get('size') or 0),
+            'download_url': info.get('raw_url') or '',
+        })
+    picked = _pick_repo_file(entries, prefer_name=None, provider='GitHub gist')
+    download_url = (picked.get('download_url') or '').strip()
+    if not download_url:
+        raise DownloadError(f'GitHub gist {gist_id} file has no raw URL')
+
+    resolved = dict(meta)
+    resolved.update({
+        'path': picked.get('name') or picked.get('path'),
+        'download_url': download_url,
+        'needs_resolve': False,
+        'source_type': 'github_gist_resolved',
+        'resolved_from_repo': True,
+        'resolved_file': picked.get('name'),
+        'resolved_size': picked.get('size'),
+    })
+    return resolved
 
 
-def _github_token() -> str:
-    return (os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN') or '').strip()
+async def resolve_gitlab_project_url(meta: dict) -> dict:
+    """Resolve GitLab project / tree URL to a concrete raw file download."""
+    if not meta.get('needs_resolve'):
+        return meta
+    host = (meta.get('host') or 'gitlab.com').strip()
+    project = (meta.get('project') or '').strip().strip('/')
+    if not project:
+        raise DownloadError('Invalid GitLab project URL')
 
+    api_base = f'https://{host}/api/v4'
+    custom = (os.getenv('GITLAB_BASE_URL') or '').strip().rstrip('/')
+    if custom:
+        custom_host = urlparse(custom).netloc.lower().split(':', 1)[0]
+        if custom_host and host == custom_host:
+            api_base = f'{custom}/api/v4'
 
-def _gitlab_token() -> str:
-    return (os.getenv('GITLAB_TOKEN') or '').strip()
+    headers: dict[str, str] = {'User-Agent': 'RepoTriage'}
+    token = _gitlab_token()
+    if token:
+        headers['PRIVATE-TOKEN'] = token
+
+    project_id = quote(project, safe='')
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        ref = (meta.get('ref') or meta.get('branch') or '').strip() or None
+        if not ref:
+            status, proj = await _api_json(client, f'{api_base}/projects/{project_id}', headers)
+            if status == 404:
+                hint = ' (private project — set GITLAB_TOKEN)' if not token else ''
+                raise DownloadError(f'GitLab project not found or inaccessible: {project}{hint}')
+            if status in {401, 403}:
+                raise DownloadError(
+                    f'GitLab API rejected project lookup for {project} (HTTP {status}). '
+                    'Check GITLAB_TOKEN.'
+                )
+            if status >= 400 or not isinstance(proj, dict):
+                raise DownloadError(f'GitLab project lookup failed for {project} (HTTP {status})')
+            ref = (proj.get('default_branch') or 'main').strip() or 'main'
+
+        dir_path = (meta.get('path') or '').strip('/')
+        tree_url = f'{api_base}/projects/{project_id}/repository/tree?ref={quote(ref, safe="")}&per_page=100'
+        if dir_path:
+            tree_url += f'&path={quote(dir_path, safe="")}'
+
+        status, listing = await _api_json(client, tree_url, headers)
+        if status == 404:
+            raise DownloadError(
+                f'GitLab path not found in {project} @ {ref}'
+                + (f' ({dir_path})' if dir_path else '')
+            )
+        if status in {401, 403}:
+            raise DownloadError(f'GitLab repository tree rejected for {project} (HTTP {status})')
+        if status >= 400:
+            raise DownloadError(f'GitLab repository tree failed for {project} (HTTP {status})')
+        if not isinstance(listing, list):
+            raise DownloadError(f'Unexpected GitLab tree response for {project}')
+
+        prefer = (meta.get('repo') or project.split('/')[-1] or '').strip()
+        picked = _pick_repo_file(listing, prefer_name=prefer, provider='GitLab')
+        file_path = (picked.get('path') or picked.get('name') or '').strip()
+        if dir_path and file_path and not file_path.startswith(dir_path):
+            file_path = f'{dir_path.rstrip("/")}/{file_path}'
+        if not file_path:
+            raise DownloadError(f'Could not resolve a file path in {project}')
+
+    download_url = _gitlab_raw_url(host, project, ref, file_path)
+    resolved = dict(meta)
+    resolved.update({
+        'ref': ref,
+        'branch': ref,
+        'path': file_path,
+        'download_url': download_url,
+        'needs_resolve': False,
+        'source_type': f"{meta.get('source_type') or 'gitlab_project'}_resolved",
+        'resolved_from_repo': True,
+        'resolved_file': file_path,
+    })
+    return resolved
 
 
 def _github_contents_api_url(meta: dict) -> str | None:
-    """Build GitHub Contents API URL for blob/raw file metadata."""
     owner = meta.get('owner')
     repo = meta.get('repo')
     path = meta.get('path')
     if not owner or not repo or not path:
         return None
-    if meta.get('source_type') == 'github_release_asset':
+    if meta.get('source_type') in {
+        'github_release_asset', 'github_archive', 'github_gist_raw',
+        'github_gist', 'github_gist_resolved',
+    }:
+        return None
+    if meta.get('gist_id') and 'gist' in str(meta.get('source_type') or ''):
         return None
     encoded_path = quote(str(path), safe='/')
     api_url = f'https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}'
@@ -450,12 +758,6 @@ def _download_headers(meta: dict, *, via_contents_api: bool = False) -> dict[str
 
 
 def _resolve_download_target(meta: dict) -> tuple[str, dict[str, str], str]:
-    """
-    Choose download URL + headers.
-
-    Private GitHub repos require Contents API + GITHUB_TOKEN.
-    Public GitHub keeps raw.githubusercontent.com (no token needed).
-    """
     if meta.get('provider') == 'github' and _github_token():
         api_url = _github_contents_api_url(meta)
         if api_url:
@@ -501,8 +803,12 @@ def safe_filename(name: str) -> str:
 
 async def download_file(url: str, out_dir: str | Path = 'downloads', max_bytes: int | None = None) -> dict:
     meta = normalize_file_url(url)
-    if meta.get('needs_resolve') and meta.get('provider') == 'github':
-        meta = await resolve_github_repo_url(meta)
+    if meta.get('needs_resolve'):
+        if meta.get('provider') == 'github':
+            meta = await resolve_github_repo_url(meta)
+        elif meta.get('provider') == 'gitlab':
+            meta = await resolve_gitlab_project_url(meta)
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     max_bytes = max_bytes or int(os.getenv('MAX_DOWNLOAD_BYTES', '50000000'))

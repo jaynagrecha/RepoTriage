@@ -4,6 +4,12 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.26 — All GitHub/GitLab file-hosting URL shapes
+
+- **GitHub:** blob (incl. `refs/heads`), raw, repo root, tree, release/`latest` download, archive zip/tar, gist (+ gistusercontent)
+- **GitLab:** blob, raw, project root (nested groups), tree — resolve via API to a payload file
+- Shared payload picker: prefer name match → archives/scripts → single non-README file
+
 ### v4.0.0-alpha.25 — GitHub repository URL support
 
 - Accept `https://github.com/owner/repo` and `/tree/<ref>[/path]` URLs

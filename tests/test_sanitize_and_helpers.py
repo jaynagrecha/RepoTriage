@@ -75,8 +75,26 @@ class TestGitLabUrlNormalization(unittest.TestCase):
     def test_gitlab_refs_heads_branch(self):
         url = 'https://gitlab.com/org/repo/-/blob/refs/heads/main/path/file.bin'
         meta = normalize_gitlab_file_url(url)
-        self.assertEqual(meta['ref'], 'refs/heads/main')
+        self.assertEqual(meta['ref'], 'main')
         self.assertEqual(meta['path'], 'path/file.bin')
+        self.assertEqual(
+            meta['download_url'],
+            'https://gitlab.com/org/repo/-/raw/main/path/file.bin',
+        )
+
+    def test_gitlab_project_root_needs_resolve(self):
+        meta = normalize_gitlab_file_url('https://gitlab.com/zohair222/file01')
+        self.assertEqual(meta['source_type'], 'gitlab_project')
+        self.assertTrue(meta['needs_resolve'])
+        self.assertEqual(meta['owner'], 'zohair222')
+        self.assertEqual(meta['repo'], 'file01')
+
+    def test_gitlab_tree_needs_resolve(self):
+        meta = normalize_gitlab_file_url('https://gitlab.com/group/proj/-/tree/main/samples')
+        self.assertEqual(meta['source_type'], 'gitlab_tree')
+        self.assertEqual(meta['ref'], 'main')
+        self.assertEqual(meta['path'], 'samples')
+        self.assertTrue(meta['needs_resolve'])
 
     def test_normalize_file_url_routes_gitlab(self):
         url = 'https://gitlab.com/a/b/-/blob/main/x.zip'
