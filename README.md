@@ -4,6 +4,10 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.35 — Revert Analyst Report CSS polish
+
+- Restore the simpler alpha.33 Analyst Report HTML template (previous design preferred)
+
 ### v4.0.0-alpha.34 — Analyst Report visual design
 
 - Richer standalone HTML report CSS: DM Sans + IBM Plex Mono, layered background, risk pill, numbered sections, TOC chips

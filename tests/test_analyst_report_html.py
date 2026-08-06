@@ -115,19 +115,14 @@ class TestAnalystReportHtml(unittest.TestCase):
         self.assertIn('T1105', html)
         self.assertIn('Relations Snapshot', html)
         self.assertIn('query-only', html)
-        self.assertIn('section-num', html)
-        self.assertIn('risk-pill', html)
         self.assertNotIn('<br># RepoTriage', html)
 
     def test_build_analyst_report_uses_template(self):
         report = build_analyst_report(_sample_result())
-        self.assertEqual(report.get('format'), 'templated_html_v2')
+        self.assertEqual(report.get('format'), 'templated_html_v1')
         self.assertIn('# RepoTriage Analyst Report', report['markdown'])
         self.assertIn('<!DOCTYPE html>', report['html'])
         self.assertIn('Overall Risk', report['html'])
-        self.assertIn('section-num', report['html'])
-        self.assertIn('risk-pill', report['html'])
-        self.assertIn('DM Sans', report['html'])
 
 
 if __name__ == '__main__':

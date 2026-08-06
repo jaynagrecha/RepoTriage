@@ -725,7 +725,7 @@ def build_analyst_report(result: dict) -> dict:
     md = '\n'.join(lines)
     from .analyst_report_html import render_analyst_report_html
     html = render_analyst_report_html(result)
-    return {'markdown': md, 'html': html, 'format': 'templated_html_v2'}
+    return {'markdown': md, 'html': html, 'format': 'templated_html_v1'}
 
 def export_csv(result: dict) -> str:
     out=io.StringIO(); w=csv.writer(out)
