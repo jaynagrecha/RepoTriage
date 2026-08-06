@@ -133,10 +133,58 @@ def normalize_gitlab_file_url(url: str) -> dict:
     }
 
 
+_ARCHIVE_SUFFIXES = (
+    '.7z', '.zip', '.rar', '.tar', '.tar.gz', '.tgz', '.gz', '.bz2', '.xz', '.cab',
+    '.iso', '.img', '.dmg', '.apk', '.msi', '.exe', '.dll', '.js', '.vbs', '.ps1',
+    '.bat', '.cmd', '.scr', '.jar', '.war', '.doc', '.docm', '.xls', '.xlsm', '.pptm',
+)
+_SKIP_ROOT_NAMES = frozenset({
+    'readme', 'readme.md', 'readme.txt', 'license', 'license.md', 'licence', 'licence.md',
+    '.gitignore', '.gitattributes', '.editorconfig', 'code_of_conduct.md', 'security.md',
+    'contributing.md', 'changelog.md', 'changes.md',
+})
+
+
+def _looks_like_payload_name(name: str) -> bool:
+    n = (name or '').lower()
+    return any(n.endswith(suf) for suf in _ARCHIVE_SUFFIXES)
+
+
+def _pick_github_repo_file(entries: list, *, prefer_name: str | None = None) -> dict:
+    """Choose a single downloadable payload from a GitHub Contents API directory listing."""
+    files = [e for e in entries if isinstance(e, dict) and e.get('type') == 'file' and e.get('name')]
+    if not files:
+        raise DownloadError('GitHub repository root has no downloadable files (only directories?). Paste a blob/raw file URL.')
+
+    prefer = (prefer_name or '').strip().lower()
+    if prefer:
+        for item in files:
+            if str(item.get('name') or '').lower() == prefer:
+                return item
+
+    payloads = [f for f in files if _looks_like_payload_name(str(f.get('name') or ''))]
+    if len(payloads) == 1:
+        return payloads[0]
+    if payloads:
+        return max(payloads, key=lambda f: int(f.get('size') or 0))
+
+    non_docs = [f for f in files if str(f.get('name') or '').lower() not in _SKIP_ROOT_NAMES]
+    if len(non_docs) == 1:
+        return non_docs[0]
+    if len(files) == 1:
+        return files[0]
+
+    names = ', '.join(str(f.get('name')) for f in files[:15])
+    raise DownloadError(
+        'GitHub repository has multiple files — paste a specific blob/raw URL. '
+        f'Root candidates: {names}'
+    )
+
+
 def normalize_github_file_url(url: str) -> dict:
     url = url.strip()
     parsed = urlparse(url)
-    host = parsed.netloc.lower()
+    host = parsed.netloc.lower().split(':', 1)[0]
     path = parsed.path
 
     if host == 'raw.githubusercontent.com':
@@ -156,8 +204,8 @@ def normalize_github_file_url(url: str) -> dict:
             'display_url': url,
         }
 
-    if host == 'github.com':
-        parts = path.strip('/').split('/')
+    if host in {'github.com', 'www.github.com'}:
+        parts = [p for p in path.strip('/').split('/') if p]
         if len(parts) >= 5 and parts[2] == 'blob':
             owner, repo, branch = parts[0], parts[1], parts[3]
             file_path = '/'.join(parts[4:])
@@ -200,9 +248,9 @@ def normalize_github_file_url(url: str) -> dict:
                 'download_url': raw,
                 'display_url': url,
             }
-        if 'releases/download' in path:
-            owner = parts[0] if len(parts) > 0 else ''
-            repo = parts[1] if len(parts) > 1 else ''
+        if len(parts) >= 5 and parts[2] == 'releases' and parts[3] == 'download':
+            owner = parts[0]
+            repo = parts[1]
             file_path = parts[-1] if parts else 'download.bin'
             return {
                 'provider': 'github',
@@ -214,8 +262,136 @@ def normalize_github_file_url(url: str) -> dict:
                 'download_url': url,
                 'display_url': url,
             }
+        # github.com/owner/repo[/] — resolve via API to a root payload file
+        if len(parts) == 2:
+            owner, repo = parts[0], parts[1]
+            return {
+                'provider': 'github',
+                'source_type': 'github_repo',
+                'owner': owner,
+                'repo': repo,
+                'branch': None,
+                'path': '',
+                'download_url': '',
+                'display_url': url,
+                'needs_resolve': True,
+            }
+        # github.com/owner/repo/tree/<ref>[/subdir...]
+        if len(parts) >= 4 and parts[2] == 'tree':
+            owner, repo = parts[0], parts[1]
+            rest = parts[3:]
+            if len(rest) >= 3 and rest[0] == 'refs' and rest[1] == 'heads':
+                branch = '/'.join(rest[:3])
+                subpath = '/'.join(rest[3:])
+            else:
+                branch = rest[0]
+                subpath = '/'.join(rest[1:])
+            return {
+                'provider': 'github',
+                'source_type': 'github_tree',
+                'owner': owner,
+                'repo': repo,
+                'branch': branch,
+                'path': subpath,
+                'download_url': '',
+                'display_url': url,
+                'needs_resolve': True,
+            }
 
-    raise DownloadError('Unsupported GitHub URL format')
+    raise DownloadError(
+        'Unsupported GitHub URL format. Use a file blob/raw URL, a release asset URL, '
+        'or a repository URL (https://github.com/owner/repo).'
+    )
+
+
+async def _github_api_json(client: httpx.AsyncClient, url: str, headers: dict[str, str]) -> tuple[int, dict | list]:
+    resp = await client.get(url, headers=headers)
+    try:
+        payload = resp.json()
+    except Exception:
+        payload = {}
+    return resp.status_code, payload
+
+
+async def resolve_github_repo_url(meta: dict) -> dict:
+    """Resolve github.com/owner/repo (or /tree/...) to a concrete file download target."""
+    if not meta.get('needs_resolve'):
+        return meta
+    owner = (meta.get('owner') or '').strip()
+    repo = (meta.get('repo') or '').strip()
+    if not owner or not repo:
+        raise DownloadError('Invalid GitHub repository URL')
+
+    headers = {
+        'User-Agent': 'RepoTriage',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    token = _github_token()
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        branch = (meta.get('branch') or '').strip() or None
+        if not branch:
+            status, repo_info = await _github_api_json(
+                client, f'https://api.github.com/repos/{owner}/{repo}', headers
+            )
+            if status == 404:
+                hint = ' (private repo — set GITHUB_TOKEN)' if not token else ''
+                raise DownloadError(f'GitHub repository not found or inaccessible: {owner}/{repo}{hint}')
+            if status in {401, 403}:
+                raise DownloadError(
+                    f'GitHub API rejected repository lookup for {owner}/{repo} (HTTP {status}). '
+                    'Check GITHUB_TOKEN scopes.'
+                )
+            if status >= 400 or not isinstance(repo_info, dict):
+                raise DownloadError(f'GitHub repository lookup failed for {owner}/{repo} (HTTP {status})')
+            branch = (repo_info.get('default_branch') or 'main').strip() or 'main'
+
+        dir_path = (meta.get('path') or '').strip('/')
+        contents_url = f'https://api.github.com/repos/{owner}/{repo}/contents'
+        if dir_path:
+            contents_url += '/' + quote(dir_path, safe='/')
+        contents_url += f'?ref={quote(branch, safe="")}'
+
+        status, listing = await _github_api_json(client, contents_url, headers)
+        if status == 404:
+            raise DownloadError(
+                f'GitHub path not found in {owner}/{repo} @ {branch}'
+                + (f' ({dir_path})' if dir_path else '')
+            )
+        if status in {401, 403}:
+            raise DownloadError(f'GitHub Contents API rejected listing for {owner}/{repo} (HTTP {status})')
+        if status >= 400:
+            raise DownloadError(f'GitHub Contents API failed for {owner}/{repo} (HTTP {status})')
+
+        if isinstance(listing, dict) and listing.get('type') == 'file':
+            picked = listing
+        elif isinstance(listing, list):
+            picked = _pick_github_repo_file(listing, prefer_name=repo)
+        else:
+            raise DownloadError(f'Unexpected GitHub Contents API response for {owner}/{repo}')
+
+    file_path = (picked.get('path') or picked.get('name') or '').strip()
+    if not file_path:
+        raise DownloadError(f'Could not resolve a file path in {owner}/{repo}')
+    download_url = (picked.get('download_url') or '').strip()
+    if not download_url:
+        download_url = f'https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}'
+
+    resolved = dict(meta)
+    resolved.update({
+        'branch': branch,
+        'path': file_path,
+        'download_url': download_url,
+        'needs_resolve': False,
+        'source_type': f"{meta.get('source_type') or 'github_repo'}_resolved",
+        'resolved_from_repo': True,
+        'resolved_file': file_path,
+        'resolved_size': picked.get('size'),
+    })
+    return resolved
 
 
 def normalize_file_url(url: str) -> dict:
@@ -325,11 +501,16 @@ def safe_filename(name: str) -> str:
 
 async def download_file(url: str, out_dir: str | Path = 'downloads', max_bytes: int | None = None) -> dict:
     meta = normalize_file_url(url)
+    if meta.get('needs_resolve') and meta.get('provider') == 'github':
+        meta = await resolve_github_repo_url(meta)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     max_bytes = max_bytes or int(os.getenv('MAX_DOWNLOAD_BYTES', '50000000'))
-    filename = safe_filename(meta.get('path') or 'sample.bin')
+    filename = safe_filename(meta.get('path') or meta.get('repo') or 'sample.bin')
     out_path = out_dir / f'{uuid.uuid4().hex}_{filename}'
+
+    if not meta.get('download_url') and not _github_contents_api_url(meta):
+        raise DownloadError('Could not resolve a downloadable file from the provided URL')
 
     download_url, headers, via = _resolve_download_target(meta)
     source_host = urlparse(meta['display_url']).netloc.lower().split(':', 1)[0]

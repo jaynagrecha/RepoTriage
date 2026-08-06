@@ -4,6 +4,12 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.25 — GitHub repository URL support
+
+- Accept `https://github.com/owner/repo` and `/tree/<ref>[/path]` URLs
+- Resolve via GitHub API: prefer a root file matching the repo name, else archive/payload heuristics
+- Clearer errors when the repo is missing/private or has multiple ambiguous files
+
 ### v4.0.0-alpha.24 — VT labels, original names, contacted infra, GitLab owner/repo
 
 - VirusTotal **popular threat label**, **family labels**, and **threat categories** shown on Overview + VirusTotal tabs
