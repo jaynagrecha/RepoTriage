@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.27 — WU/MTCN LiveHunt + email alerts
+
+- Mirror VT LiveHunt `DETECT_GTI_MaliciousFilesWithWUKeywords` (WU/MTCN filename keywords + VT malicious > 0)
+- Repo hunt discovers WU-named GitHub repos/files and emails hits via existing SMTP
+- Regular **Analyze** jobs also email the same mailbox when a WU/MTCN + malicious match is found
+- Env: `VT_LIVEHUNT_WU_RULE_ID` (default `20744291635`), `REPO_HUNT_WU_ENABLED`, `ANALYSIS_ALERT_EMAIL`
+
 ### v4.0.0-alpha.26 — All GitHub/GitLab file-hosting URL shapes
 
 - **GitHub:** blob (incl. `refs/heads`), raw, repo root, tree, release/`latest` download, archive zip/tar, gist (+ gistusercontent)

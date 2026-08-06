@@ -10,12 +10,18 @@ from ..downloader import DownloadError, download_file
 from .config import RepoHuntConfig
 from .detect.local_jsoutprox import scan_bytes
 from .detect.vt_confirm import confirm_with_virustotal
-from .discovery.github_search import discover_github_code_search
+from .detect.wu_keywords import (
+    DEFAULT_LIVEHUNT_RULE_ID as WU_LIVEHUNT_ID,
+    RULE_ID as WU_RULE_ID,
+    match_wu_names,
+    scan_wu_names,
+)
+from .discovery.github_search import discover_github_code_search, discover_wu_github_repos
 from .discovery.org_watch import discover_watched_orgs_users
 from .discovery.webhook_queue import discover_webhook_queue
 from .notify.smtp_mailer import build_findings_email, send_email
 from .state import HuntState
-from .types import Candidate, Finding
+from .types import Candidate, DetectionHit, Finding
 
 
 def _dedupe_candidates(items: list[Candidate]) -> list[Candidate]:
@@ -58,6 +64,10 @@ async def collect_candidates(cfg: RepoHuntConfig, state: HuntState) -> tuple[lis
     sources['github_search'] = len(search)
     all_items.extend(search)
 
+    wu_repos = await discover_wu_github_repos(cfg)
+    sources['github_repo_search_wu'] = len(wu_repos)
+    all_items.extend(wu_repos)
+
     watched = await discover_watched_orgs_users(cfg)
     sources['org_watch'] = len(watched)
     all_items.extend(watched)
@@ -68,6 +78,33 @@ async def collect_candidates(cfg: RepoHuntConfig, state: HuntState) -> tuple[lis
 
     deduped = _dedupe_candidates(all_items)[: cfg.max_candidates]
     return deduped, sources
+
+
+def _wu_hit_from_names(
+    *,
+    names: list[str],
+    filesize: int,
+    livehunt_rule_id: str,
+) -> DetectionHit | None:
+    hit = scan_wu_names(names, filesize=filesize)
+    if not hit:
+        return None
+    hit.vt_confirm = {
+        'livehunt_rule_id': livehunt_rule_id or WU_LIVEHUNT_ID,
+        'status': 'pending_vt',
+    }
+    return hit
+
+
+def _wu_passes_vt(hit: DetectionHit) -> bool:
+    """LiveHunt condition: analysis_stats.malicious > 0."""
+    vt = hit.vt_confirm or {}
+    try:
+        malicious = int(vt.get('malicious') or 0)
+    except Exception:
+        malicious = 0
+    verdict = str(vt.get('verdict') or '').lower()
+    return malicious > 0 or verdict == 'malicious'
 
 
 async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, send: bool = True) -> dict[str, Any]:
@@ -82,6 +119,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         'candidates': 0,
         'downloaded': 0,
         'local_matches': 0,
+        'wu_name_matches': 0,
         'new_findings': 0,
         'findings': [],
         'email': None,
@@ -116,33 +154,103 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         if state.is_seen(dedup_key):
             continue
 
-        hit = scan_bytes(
+        name_pool = [filename, cand.path, cand.repo, cand.url, (cand.extra or {}).get('name')]
+        js_hit = scan_bytes(
             data,
             path=cand.path or filename,
             min_bytes=cfg.min_bytes,
             max_bytes=cfg.max_bytes,
         )
-        if not hit:
-            # Mark lightly so we don't re-download forever; use url key only for non-matches
+        wu_hit = _wu_hit_from_names(
+            names=[str(x) for x in name_pool if x],
+            filesize=len(data),
+            livehunt_rule_id=cfg.vt_livehunt_wu_rule_id,
+        ) if cfg.wu_hunt_enabled else None
+
+        if not js_hit and not wu_hit:
             state.mark_seen(f'nomatch:{cand.url}', {'sha256': sha256, 'source': cand.source})
             continue
 
         report['local_matches'] += 1
-        hit = await confirm_with_virustotal(sha256, hit, cfg, base_dir=base_dir)
-        finding = Finding(
-            candidate=cand,
-            sha256=sha256,
-            filename=filename,
-            detection=hit,
-            triage_url=_triage_link(cfg, cand.url),
-        )
-        findings.append(finding)
-        state.mark_seen(dedup_key, {
-            'url': cand.url,
-            'source': cand.source,
-            'rule': hit.rule,
-            'repo': cand.repo,
-        })
+        if wu_hit:
+            report['wu_name_matches'] += 1
+
+        # Shared VT confirm when either detector fired
+        seed = js_hit or wu_hit
+        assert seed is not None
+        confirmed = await confirm_with_virustotal(sha256, seed, cfg, base_dir=base_dir)
+        vt = confirmed.vt_confirm or {}
+        vt_names = list(vt.get('names') or [])
+
+        emitted_rules: set[str] = set()
+
+        if js_hit:
+            js_confirmed = DetectionHit(
+                rule=js_hit.rule,
+                matched_strings=list(js_hit.matched_strings),
+                filesize=js_hit.filesize,
+                local_match=True,
+                vt_confirm=dict(vt),
+                notes=list(js_hit.notes) + list(confirmed.notes),
+            )
+            # Prefer JsOutProx livehunt id when configured
+            if cfg.vt_livehunt_rule_id:
+                js_confirmed.vt_confirm['livehunt_rule_id'] = cfg.vt_livehunt_rule_id
+            findings.append(Finding(
+                candidate=cand,
+                sha256=sha256,
+                filename=filename,
+                detection=js_confirmed,
+                triage_url=_triage_link(cfg, cand.url),
+            ))
+            emitted_rules.add(js_confirmed.rule)
+
+        if wu_hit or match_wu_names(name_pool + vt_names):
+            keywords = match_wu_names(name_pool + vt_names) or list(wu_hit.matched_strings if wu_hit else [])
+            wu_confirmed = DetectionHit(
+                rule=WU_RULE_ID,
+                matched_strings=keywords,
+                filesize=len(data),
+                local_match=True,
+                vt_confirm={
+                    **dict(vt),
+                    'livehunt_rule_id': cfg.vt_livehunt_wu_rule_id or WU_LIVEHUNT_ID,
+                },
+                notes=[
+                    f'LiveHunt mirror: MaliciousFilesWithWUKeywords keywords={",".join(keywords)}',
+                    *list(confirmed.notes),
+                ],
+            )
+            if _wu_passes_vt(wu_confirmed):
+                findings.append(Finding(
+                    candidate=cand,
+                    sha256=sha256,
+                    filename=filename,
+                    detection=wu_confirmed,
+                    triage_url=_triage_link(cfg, cand.url),
+                ))
+                emitted_rules.add(WU_RULE_ID)
+            else:
+                report['errors'].append(
+                    f'{cand.url}: WU/MTCN name match but VT malicious=0 '
+                    f'(status={vt.get("status")} verdict={vt.get("verdict")}) — not emailed'
+                )
+
+        if emitted_rules:
+            state.mark_seen(dedup_key, {
+                'url': cand.url,
+                'source': cand.source,
+                'rules': sorted(emitted_rules),
+                'repo': cand.repo,
+            })
+        else:
+            # Checked once — do not re-download every cron cycle while VT still clean
+            state.mark_seen(dedup_key, {
+                'url': cand.url,
+                'sha256': sha256,
+                'note': 'wu_name_without_vt_malicious',
+                'source': cand.source,
+            })
 
     report['new_findings'] = len(findings)
     report['findings'] = [f.to_dict() for f in findings[: cfg.max_findings_email]]
@@ -155,6 +263,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                 'sources': sources,
                 'candidates': report['candidates'],
                 'local_matches': report['local_matches'],
+                'wu_name_matches': report['wu_name_matches'],
             },
         )
         report['email'] = send_email(msg, cfg)
@@ -165,7 +274,6 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
 
     report['ok'] = True
     report['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-    # Don't persist full findings forever in last_run (keep summary)
     summary = {
         **report,
         'findings': report['findings'][:10],

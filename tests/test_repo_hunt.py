@@ -76,9 +76,10 @@ class TestSmtpMessage(unittest.TestCase):
         )
         msg = build_findings_email([finding], cfg, run_meta={'sources': {'webhook': 1}, 'candidates': 1, 'local_matches': 1})
         body = msg.get_content()
-        self.assertIn('JsOutProx', msg['Subject'])
+        self.assertIn('potential_jsoutprox_js', msg['Subject'])
         self.assertIn('a/b', body)
         self.assertIn('potential_jsoutprox_js', body)
+        self.assertIn('DETECT_GTI_MaliciousFilesWithWUKeywords', body)
 
 
 class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):
@@ -109,10 +110,14 @@ class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):
                 github_orgs=[],
                 github_users=[],
                 search_query='x',
+                extra_search_queries=[],
                 search_max_results=5,
+                wu_hunt_enabled=True,
+                wu_repo_search_queries=[],
                 vt_confirm=False,
                 vt_api_key='',
                 vt_livehunt_rule_id='24949411305',
+                vt_livehunt_wu_rule_id='20744291635',
                 webhook_secret='secret',
                 smtp_host='',
                 smtp_port=587,
@@ -124,6 +129,7 @@ class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):
                 triage_base_url='https://repotriage.example',
                 max_candidates=10,
                 max_findings_email=10,
+                analysis_alert_email=False,
             )
             with patch('app.modules.repo_hunt.pipeline.download_file', new=AsyncMock(side_effect=fake_download)):
                 report = await run_repo_hunt(base, cfg=cfg, send=False)

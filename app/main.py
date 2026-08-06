@@ -28,6 +28,7 @@ from .modules.urlhaus import enrich_iocs as enrich_urlhaus
 from .modules.abusech_connector import enrich_feodo, enrich_sslbl, abusech_summary, abusech_key
 from .modules.cti_selftest import run_cti_selftest
 from .modules.repo_hunt import HuntState, RepoHuntConfig, run_repo_hunt
+from .modules.repo_hunt.analysis_alerts import collect_wu_hits_from_analysis, maybe_send_analysis_wu_alert
 from .modules.mitre_mapper import map_mitre
 from .modules.narrative import generate_attack_narrative
 from .modules.cti_fusion import build_cti_dashboard, build_infrastructure_graph, discover_related_samples, build_campaign_analysis, build_threat_actor_assessment, build_correlation_matrix, build_analyst_report, export_csv, export_stix, export_misp
@@ -39,8 +40,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.26'
-PLATFORM_VERSION = '4.0.0-alpha.26'
+APP_VERSION = '4.0.0-alpha.27'
+PLATFORM_VERSION = '4.0.0-alpha.27'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -668,6 +669,9 @@ async def repo_hunt_status(request: Request):
         'vt_confirm': cfg.vt_confirm,
         'vt_configured': bool(cfg.vt_api_key),
         'livehunt_rule_id': cfg.vt_livehunt_rule_id or None,
+        'livehunt_wu_rule_id': cfg.vt_livehunt_wu_rule_id or None,
+        'wu_hunt_enabled': cfg.wu_hunt_enabled,
+        'analysis_alert_email': cfg.analysis_alert_email,
         'watched_orgs': cfg.github_orgs,
         'watched_users': cfg.github_users,
         'webhook_secret_configured': bool(cfg.webhook_secret),
@@ -1253,6 +1257,17 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
             'exports_available': ['json', 'csv', 'stix', 'misp', 'html_report'],
             'summary': summary,
         }
+        wu_hits = collect_wu_hits_from_analysis(result)
+        result['livehunt_matches'] = wu_hits
+        if wu_hits:
+            kw = sorted({k for h in wu_hits for k in (h.get('matched_keywords') or [])})
+            summary += (
+                f"\n\nLiveHunt WU/MTCN: {len(wu_hits)} file(s) matched "
+                f"DETECT_GTI_MaliciousFilesWithWUKeywords"
+                + (f" ({', '.join(kw)})." if kw else '.')
+            )
+            result['summary'] = summary
+        result['alert_email'] = maybe_send_analysis_wu_alert(result, job_id=job_id)
         if job_id:
             cache_job_inventory(BASE_DIR, job_id, inventory)
         return _public_result(result)
