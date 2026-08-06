@@ -468,6 +468,29 @@ async def repo_hunt_ingest(req: RepoHuntIngestRequest, request: Request):
     return {'ok': True, 'queued': True, 'url': req.url}
 
 
+@app.get('/api/admin/repo-hunt/run')
+async def repo_hunt_run_get_hint():
+    """Browsers issue GET; the real trigger is POST + admin header."""
+    return {
+        'ok': False,
+        'detail': 'Use POST, not GET (opening this URL in a browser always does GET).',
+        'how_to': {
+            'method': 'POST',
+            'url': '/api/admin/repo-hunt/run',
+            'headers': {
+                'x-admin-bypass-token': '<ADMIN_BYPASS_TOKEN from Render env>',
+                'Content-Type': 'application/json',
+            },
+            'optional_query': 'send=false for dry-run without email',
+            'status_url': 'GET /api/admin/repo-hunt/status (same admin header)',
+            'curl': (
+                "curl -X POST -H 'x-admin-bypass-token: $ADMIN_BYPASS_TOKEN' "
+                "'https://repotriage.onrender.com/api/admin/repo-hunt/run'"
+            ),
+        },
+    }
+
+
 @app.post('/api/admin/repo-hunt/run')
 async def repo_hunt_run(request: Request, send: bool = True):
     """Admin trigger for discovery → local JsOutProx prefilter → VT confirm → SMTP."""
