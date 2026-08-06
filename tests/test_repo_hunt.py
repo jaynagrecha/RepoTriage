@@ -75,11 +75,15 @@ class TestSmtpMessage(unittest.TestCase):
             triage_url='https://triage.example/?url=1',
         )
         msg = build_findings_email([finding], cfg, run_meta={'sources': {'webhook': 1}, 'candidates': 1, 'local_matches': 1})
-        body = msg.get_content()
+        plain = msg.get_body(preferencelist=('plain',)).get_content()
+        html = msg.get_body(preferencelist=('html',)).get_content()
         self.assertIn('potential_jsoutprox_js', msg['Subject'])
-        self.assertIn('a/b', body)
-        self.assertIn('potential_jsoutprox_js', body)
-        self.assertIn('DETECT_GTI_MaliciousFilesWithWUKeywords', body)
+        self.assertIn('a/b', plain)
+        self.assertIn('potential_jsoutprox_js', plain)
+        self.assertIn('DETECT_GTI_MaliciousFilesWithWUKeywords', plain)
+        self.assertIn('multipart/alternative', msg.get_content_type())
+        self.assertIn('RepoTriage', html)
+        self.assertIn('Open VirusTotal', html)
         self.assertNotIn('scheduled scan', msg['Subject'])
 
         wu_msg = build_analysis_wu_alert_email(
@@ -87,16 +91,27 @@ class TestSmtpMessage(unittest.TestCase):
             job_id='scheduled-hunt',
             source_url='repo-hunt-5min-scan',
             hits=[{
-                'filename': 'mtcn_drop.7z',
+                'filename': 'mtcn_details_jpg.js',
                 'sha256': 'b' * 64,
                 'matched_keywords': ['mtcn_'],
                 'vt_verdict': 'malicious',
                 'vt_malicious': 4,
+                'popular_threat_label': 'trojan.remcos/abtrojan',
+                'family_labels': ['remcos', 'abtrojan'],
+                'vt_link': 'https://www.virustotal.com/gui/file/' + ('b' * 64),
             }],
+            triage_url='https://repotriage.onrender.com/?url=1',
             scan_mode='scheduled',
         )
+        wu_plain = wu_msg.get_body(preferencelist=('plain',)).get_content()
+        wu_html = wu_msg.get_body(preferencelist=('html',)).get_content()
         self.assertIn('WU/MTCN', wu_msg['Subject'])
         self.assertIn('scheduled scan', wu_msg['Subject'])
+        self.assertIn('mtcn_details_jpg.js', wu_plain)
+        self.assertIn('MALICIOUS', wu_html)
+        self.assertIn('jpg masquerading', wu_html)
+        self.assertIn('Open in RepoTriage', wu_html)
+        self.assertIn('trojan.remcos/abtrojan', wu_html)
 
 
 class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):

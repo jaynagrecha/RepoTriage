@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.31 — HTML alert email templates
+
+- Hunt and WU/MTCN alert emails are now **multipart HTML + plain text**
+- Structured cards: verdict badge, VT malicious count, threat label, families, SHA256, matched keywords
+- Dual-extension / masquerade badge on hit filenames (e.g. `mtcn_details_jpg.js`, `*.jpg.7z`)
+- CTA buttons: Open VirusTotal · Open in RepoTriage · Source file
+
 ### v4.0.0-alpha.30 — VT Relations + dual-extension
 
 - New **Relations** Summary tab (VT-style): execution/compressed parents, bundled + dropped files, ITW URLs/domains, contacted infra
