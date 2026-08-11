@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import httpx
-
+from ...http_client import async_client
 from ..config import RepoHuntConfig
 from ..types import DetectionHit
 
@@ -79,7 +78,7 @@ async def confirm_with_virustotal(
     except Exception as exc:
         # Direct lightweight fallback
         try:
-            async with httpx.AsyncClient(timeout=25) as client:
+            async with async_client(timeout=25) as client:
                 resp = await client.get(
                     f'https://www.virustotal.com/api/v3/files/{sha256}',
                     headers={'x-apikey': cfg.vt_api_key},

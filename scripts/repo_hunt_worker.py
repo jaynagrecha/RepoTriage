@@ -81,12 +81,21 @@ def _release_lock(fd: int | None, lock_path: Path) -> None:
 
 
 async def _run_once(base: Path, cfg: RepoHuntConfig) -> int:
-    report = await run_repo_hunt(base, cfg=cfg, send=True)
+    try:
+        report = await run_repo_hunt(base, cfg=cfg, send=True)
+    except Exception as exc:
+        print(json.dumps({
+            'ok': False,
+            'error': f'{exc.__class__.__name__}: {exc}',
+            'message': 'Hunt cycle failed; worker will continue on next interval',
+        }), flush=True)
+        return 2
     print(json.dumps(report, indent=2, default=str), flush=True)
     if not report.get('ok') and report.get('error'):
         return 2
     if report.get('email') and report['email'].get('ok') is False and not report['email'].get('skipped'):
         return 3
+    # Soft discovery TLS/network errors should not fail the cron when other sources ran
     return 0
 
 

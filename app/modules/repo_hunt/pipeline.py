@@ -56,28 +56,45 @@ async def _fetch_candidate_bytes(candidate: Candidate, out_dir: Path) -> tuple[b
     return data, filename, sha256
 
 
-async def collect_candidates(cfg: RepoHuntConfig, state: HuntState) -> tuple[list[Candidate], dict[str, int]]:
+async def collect_candidates(
+    cfg: RepoHuntConfig,
+    state: HuntState,
+) -> tuple[list[Candidate], dict[str, int], list[str]]:
     sources: dict[str, int] = {}
+    errors: list[str] = []
     all_items: list[Candidate] = []
 
-    search = await discover_github_code_search(cfg)
+    async def _safe(name: str, coro) -> list[Candidate]:
+        try:
+            return await coro
+        except Exception as exc:
+            errors.append(f'{name}: {exc.__class__.__name__}: {exc}')
+            return []
+
+    search = await _safe('github_search', discover_github_code_search(cfg))
     sources['github_search'] = len(search)
     all_items.extend(search)
 
-    wu_repos = await discover_wu_github_repos(cfg)
+    wu_repos = await _safe('github_repo_search_wu', discover_wu_github_repos(cfg))
     sources['github_repo_search_wu'] = len(wu_repos)
     all_items.extend(wu_repos)
 
-    watched = await discover_watched_orgs_users(cfg)
+    watched = await _safe('org_watch', discover_watched_orgs_users(cfg))
     sources['org_watch'] = len(watched)
     all_items.extend(watched)
 
-    queued = discover_webhook_queue(state)
+    try:
+        queued = discover_webhook_queue(state)
+    except Exception as exc:
+        errors.append(f'webhook: {exc.__class__.__name__}: {exc}')
+        queued = []
     sources['webhook'] = len(queued)
     all_items.extend(queued)
+    if errors:
+        sources['discovery_errors'] = len(errors)
 
     deduped = _dedupe_candidates(all_items)[: cfg.max_candidates]
-    return deduped, sources
+    return deduped, sources, errors
 
 
 def _wu_hit_from_names(
@@ -131,7 +148,9 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         state.write_last_run(report)
         return report
 
-    candidates, sources = await collect_candidates(cfg, state)
+    candidates, sources, discovery_errors = await collect_candidates(cfg, state)
+    if discovery_errors:
+        report['errors'].extend(discovery_errors)
     report['sources'] = sources
     report['candidates'] = len(candidates)
 

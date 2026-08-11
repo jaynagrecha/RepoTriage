@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
+from ...http_client import async_client
 from ..config import RepoHuntConfig
 from ..types import Candidate
+
+LOG = logging.getLogger('repotriage.repo_hunt.org_watch')
 
 
 async def _list_repos(client: httpx.AsyncClient, kind: str, name: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -66,25 +70,37 @@ async def discover_watched_orgs_users(cfg: RepoHuntConfig) -> list[Candidate]:
         'User-Agent': 'RepoTriage-RepoHunt',
     }
     out: list[Candidate] = []
-    async with httpx.AsyncClient(timeout=40, headers=headers) as client:
-        targets: list[tuple[str, str]] = [('org', o) for o in cfg.github_orgs] + [
-            ('user', u) for u in cfg.github_users
-        ]
-        for kind, name in targets:
-            repos = await _list_repos(client, kind, name, limit=12)
-            for repo in repos[:12]:
-                full = (repo.get('full_name') or '').strip()
-                if not full:
+    try:
+        async with async_client(timeout=40, headers=headers) as client:
+            targets: list[tuple[str, str]] = [('org', o) for o in cfg.github_orgs] + [
+                ('user', u) for u in cfg.github_users
+            ]
+            for kind, name in targets:
+                try:
+                    repos = await _list_repos(client, kind, name, limit=12)
+                except httpx.HTTPError as exc:
+                    LOG.warning('org/user list failed for %s/%s: %s: %s', kind, name, exc.__class__.__name__, exc)
                     continue
-                out.extend(
-                    await _recent_js_files(
-                        client,
-                        full,
-                        min_bytes=cfg.min_bytes,
-                        max_bytes=cfg.max_bytes,
-                        limit=8,
-                    )
-                )
-                if len(out) >= cfg.max_candidates:
-                    return out[: cfg.max_candidates]
+                for repo in repos[:12]:
+                    full = (repo.get('full_name') or '').strip()
+                    if not full:
+                        continue
+                    try:
+                        out.extend(
+                            await _recent_js_files(
+                                client,
+                                full,
+                                min_bytes=cfg.min_bytes,
+                                max_bytes=cfg.max_bytes,
+                                limit=8,
+                            )
+                        )
+                    except httpx.HTTPError as exc:
+                        LOG.warning('repo file search failed for %s: %s: %s', full, exc.__class__.__name__, exc)
+                        continue
+                    if len(out) >= cfg.max_candidates:
+                        return out[: cfg.max_candidates]
+    except Exception as exc:
+        LOG.warning('org watch discovery aborted: %s: %s', exc.__class__.__name__, exc)
+        return out
     return out[: cfg.max_candidates]

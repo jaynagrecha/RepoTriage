@@ -41,8 +41,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.35'
-PLATFORM_VERSION = '4.0.0-alpha.35'
+APP_VERSION = '4.0.0-alpha.36'
+PLATFORM_VERSION = '4.0.0-alpha.36'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')

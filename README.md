@@ -4,6 +4,14 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.36 — Repo hunt SSL resilience
+
+- Shared httpx client uses **certifi** CA bundle by default (avoids broken `SSL_CERT_FILE` / self-signed verify failures)
+- GitHub discovery soft-fails on ConnectError/SSL instead of crashing the cron/worker
+- Hunt worker one-shot catches unexpected exceptions and exits cleanly
+- Docker image installs/updates `ca-certificates`; `certifi` pinned in requirements
+- Emergency override: `HTTPX_VERIFY=false` (not recommended)
+
 ### v4.0.0-alpha.35 — Revert Analyst Report CSS polish
 
 - Restore the simpler alpha.33 Analyst Report HTML template (previous design preferred)

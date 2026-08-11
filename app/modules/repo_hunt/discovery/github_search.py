@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
+from ...http_client import async_client
 from ..config import RepoHuntConfig
 from ..types import Candidate
+
+LOG = logging.getLogger('repotriage.repo_hunt.github_search')
 
 
 async def discover_github_code_search(cfg: RepoHuntConfig) -> list[Candidate]:
@@ -19,7 +23,11 @@ async def discover_github_code_search(cfg: RepoHuntConfig) -> list[Candidate]:
         q = (query or '').strip()
         if not q:
             continue
-        batch = await _search_code(cfg, q)
+        try:
+            batch = await _search_code(cfg, q)
+        except Exception as exc:
+            LOG.warning('github code search failed for %r: %s: %s', q, exc.__class__.__name__, exc)
+            continue
         for c in batch:
             key = c.url.lower()
             if key in seen:
@@ -43,7 +51,7 @@ async def _search_code(cfg: RepoHuntConfig, query: str) -> list[Candidate]:
         'per_page': min(100, max(1, cfg.search_max_results)),
     }
     out: list[Candidate] = []
-    async with httpx.AsyncClient(timeout=40, headers=headers) as client:
+    async with async_client(timeout=40, headers=headers) as client:
         resp = await client.get('https://api.github.com/search/code', params=params)
         if resp.status_code >= 400:
             return out
@@ -89,33 +97,41 @@ async def discover_wu_github_repos(cfg: RepoHuntConfig) -> list[Candidate]:
     ]
     out: list[Candidate] = []
     seen: set[str] = set()
-    async with httpx.AsyncClient(timeout=40, headers=headers) as client:
-        for query in queries:
-            resp = await client.get(
-                'https://api.github.com/search/repositories',
-                params={'q': query, 'per_page': min(30, cfg.search_max_results)},
-            )
-            if resp.status_code >= 400:
-                continue
-            for item in (resp.json().get('items') or [])[: cfg.search_max_results]:
-                full = (item.get('full_name') or '').strip()
-                html = (item.get('html_url') or '').strip()
-                if not full or not html:
-                    continue
-                key = html.lower()
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(
-                    Candidate(
-                        url=html,
-                        source='github_repo_search_wu',
-                        path='',
-                        repo=full,
-                        html_url=html,
-                        extra={'query': query, 'name': item.get('name')},
+    try:
+        async with async_client(timeout=40, headers=headers) as client:
+            for query in queries:
+                try:
+                    resp = await client.get(
+                        'https://api.github.com/search/repositories',
+                        params={'q': query, 'per_page': min(30, cfg.search_max_results)},
                     )
-                )
-                if len(out) >= cfg.max_candidates:
-                    return out
+                except httpx.HTTPError as exc:
+                    LOG.warning('github repo search failed for %r: %s: %s', query, exc.__class__.__name__, exc)
+                    continue
+                if resp.status_code >= 400:
+                    continue
+                for item in (resp.json().get('items') or [])[: cfg.search_max_results]:
+                    full = (item.get('full_name') or '').strip()
+                    html = (item.get('html_url') or '').strip()
+                    if not full or not html:
+                        continue
+                    key = html.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(
+                        Candidate(
+                            url=html,
+                            source='github_repo_search_wu',
+                            path='',
+                            repo=full,
+                            html_url=html,
+                            extra={'query': query, 'name': item.get('name')},
+                        )
+                    )
+                    if len(out) >= cfg.max_candidates:
+                        return out
+    except Exception as exc:
+        LOG.warning('github WU repo discovery aborted: %s: %s', exc.__class__.__name__, exc)
+        return out
     return out

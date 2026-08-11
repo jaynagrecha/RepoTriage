@@ -28,7 +28,7 @@ from .modules.static_analysis.indicators import build_extracted_indicators
 from .modules.integrations import send_webhook
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PLATFORM_VERSION = '4.0.0-alpha.35'
+PLATFORM_VERSION = '4.0.0-alpha.36'
 LOG = logging.getLogger('repotriage.worker')
 
 
