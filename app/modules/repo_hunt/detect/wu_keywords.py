@@ -5,6 +5,9 @@ Mirrors LiveHunt rule DETECT_GTI_MaliciousFilesWithWUKeywords:
   vt.metadata.file_name matches /(?i)(westernunion|western union|western_union|
       westernunionbank|pagofacil|wupos|_mtcn|mtcn_| mtcn )/ and
   vt.metadata.analysis_stats.malicious > 0
+
+RepoTriage tightens `_mtcn` with a trailing non-alnum boundary so face-detection
+`MTCNN` / `_mtcnn` paths (e.g. ZQCNN) are not treated as Western Union MTCN.
 """
 
 from __future__ import annotations
@@ -18,9 +21,10 @@ RULE_ID = 'DETECT_GTI_MaliciousFilesWithWUKeywords'
 RULE_NAME = 'MaliciousFilesWithWUKeywords'
 DEFAULT_LIVEHUNT_RULE_ID = '20744291635'
 
-# Faithful to the LiveHunt regex (case-insensitive).
+# LiveHunt-compatible tokens, with `_mtcn` bounded so it does not match inside `_mtcnn`.
 WU_FILENAME_RE = re.compile(
-    r'(?i)(westernunion|western union|western_union|westernunionbank|pagofacil|wupos|_mtcn|mtcn_|\smtcn\s)'
+    r'(?i)(westernunion|western union|western_union|westernunionbank|pagofacil|wupos|'
+    r'_mtcn(?![a-z0-9])|mtcn_|\smtcn\s)'
 )
 
 # Human-readable keyword tokens for email/UI (subset of the alternation).

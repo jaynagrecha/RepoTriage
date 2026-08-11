@@ -90,7 +90,7 @@ async def discover_wu_github_repos(cfg: RepoHuntConfig) -> list[Candidate]:
         'User-Agent': 'RepoTriage-RepoHunt',
     }
     queries = cfg.wu_repo_search_queries or [
-        'mtcn in:name',
+        'mtcn in:name NOT mtcnn',
         'westernunion in:name',
         'wupos in:name',
         'pagofacil in:name',

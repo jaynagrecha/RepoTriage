@@ -58,6 +58,42 @@ class TestWuKeywords(unittest.TestCase):
         self.assertIsNotNone(hit)
         self.assertEqual(hit.rule, RULE_ID)
 
+    def test_mtcnn_face_detection_not_wu(self):
+        """ZQCNN / MTCNN paths must not fire Western Union MTCN matching."""
+        noise = [
+            'ZQ_CNN_MTCNN.h',
+            'ZQCNN/MTCNN/zq_cnn_mtcnn.cpp',
+            'https://github.com/zuoqing1988/ZQCNN/blob/master/ZQCNN/ZQ_CNN_MTCNN.h',
+            'train_mtcnn_model.py',
+        ]
+        for name in noise:
+            self.assertEqual(match_wu_names([name]), [], msg=name)
+
+    def test_real_mtcn_tokens_still_match(self):
+        self.assertTrue(match_wu_names(['payment_mtcn.zip']))
+        self.assertTrue(match_wu_names(['invoice_mtcn']))
+        self.assertTrue(match_wu_names(['mtcn_code_scan.bin']))
+
+    def test_default_wu_queries_exclude_mtcnn(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(
+            os.environ,
+            {
+                'REPO_HUNT_WU_ENABLED': 'true',
+                'REPO_HUNT_EXTRA_SEARCH_QUERIES': '',
+                'REPO_HUNT_WU_REPO_QUERIES': '',
+            },
+            clear=False,
+        ):
+            # Empty CSV env vars must yield built-in defaults (patch.dict '' still sets the key).
+            os.environ.pop('REPO_HUNT_EXTRA_SEARCH_QUERIES', None)
+            os.environ.pop('REPO_HUNT_WU_REPO_QUERIES', None)
+            cfg = RepoHuntConfig.from_env()
+        self.assertTrue(any('NOT mtcnn' in q for q in cfg.extra_search_queries))
+        self.assertTrue(any('NOT mtcnn' in q for q in cfg.wu_repo_search_queries))
+
 
 class TestAnalysisWuHits(unittest.TestCase):
     def test_collect_from_inventory(self):

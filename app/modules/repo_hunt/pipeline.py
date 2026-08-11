@@ -137,6 +137,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         'downloaded': 0,
         'local_matches': 0,
         'wu_name_matches': 0,
+        'wu_vt_clean_skips': 0,
         'new_findings': 0,
         'findings': [],
         'email': None,
@@ -250,10 +251,8 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                 ))
                 emitted_rules.add(WU_RULE_ID)
             else:
-                report['errors'].append(
-                    f'{cand.url}: WU/MTCN name match but VT malicious=0 '
-                    f'(status={vt.get("status")} verdict={vt.get("verdict")}) — not emailed'
-                )
+                # Expected LiveHunt gate — not an operational error; keep errors[] for failures.
+                report['wu_vt_clean_skips'] += 1
 
         if emitted_rules:
             state.mark_seen(dedup_key, {

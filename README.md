@@ -4,6 +4,12 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.37 — WU/MTCN vs MTCNN false positives
+
+- `_mtcn` keyword match requires a non-alnum boundary so face-detection **MTCNN** / `_mtcnn` paths (e.g. ZQCNN) are not treated as Western Union MTCN
+- Default GitHub WU code/repo queries exclude `mtcnn` and prefer `mtcn_` / `_mtcn` filename tokens
+- VT-clean WU name matches counted as `wu_vt_clean_skips` instead of cluttering `errors[]` (still not emailed)
+
 ### v4.0.0-alpha.36 — Repo hunt SSL resilience
 
 - Shared httpx client uses **certifi** CA bundle by default (avoids broken `SSL_CERT_FILE` / self-signed verify failures)

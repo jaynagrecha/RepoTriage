@@ -26,14 +26,16 @@ def _csv(name: str) -> list[str]:
 
 
 _DEFAULT_WU_REPO_QUERIES = (
-    'mtcn in:name',
+    # Exclude face-detection MTCNN repos that substring-match "mtcn".
+    'mtcn in:name NOT mtcnn',
     'westernunion in:name',
     'wupos in:name',
     'pagofacil in:name',
 )
 
 _DEFAULT_WU_CODE_QUERIES = (
-    'filename:mtcn',
+    # Prefer token forms; NOT mtcnn drops CNN/face-detection false positives.
+    'filename:mtcn_ OR filename:_mtcn NOT mtcnn',
     'filename:westernunion',
     'filename:wupos',
     'filename:pagofacil',
