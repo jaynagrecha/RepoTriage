@@ -42,7 +42,11 @@ def _dedupe_candidates(items: list[Candidate]) -> list[Candidate]:
 def _triage_link(cfg: RepoHuntConfig, file_url: str) -> str:
     if not cfg.triage_base_url:
         return ''
-    return f"{cfg.triage_base_url}/?url={quote(file_url, safe='')}&auto=1&src=repotrace"
+    # vt_children=0 → Analyze extracts/lists children but skips per-child VT (quota).
+    return (
+        f"{cfg.triage_base_url}/?url={quote(file_url, safe='')}"
+        f"&auto=1&src=repo_hunt&vt_children=0"
+    )
 
 
 def _is_repo_watch_file(cand: Candidate) -> bool:

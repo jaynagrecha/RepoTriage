@@ -41,8 +41,8 @@ from .modules.deep_analysis.llm_semantic import llm_configured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-APP_VERSION = '4.0.0-alpha.42'
-PLATFORM_VERSION = '4.0.0-alpha.42'
+APP_VERSION = '4.0.0-alpha.43'
+PLATFORM_VERSION = '4.0.0-alpha.43'
 
 app = FastAPI(title='RepoTriage', version=APP_VERSION)
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'app' / 'static')), name='static')
@@ -193,6 +193,9 @@ class AnalyzeRequest(BaseModel):
             'https://gitlab.com/group/project/-/blob/main/payload.zip',
         ],
     )
+    # Manual Analyze default True. Hunt email deep-links pass False to save VT quota
+    # while still extracting children for the Files/Relations inventory.
+    vt_children: bool = True
 
     @field_validator('file_url')
     @classmethod
@@ -1114,8 +1117,9 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
         }]
         vt_reports: list[dict] = [vt_result]
 
-        # If root file is an archive, extract it recursively and analyze every child file.
-        # Manual Analyze keeps full features including per-child VirusTotal lookups.
+        # If root is an archive: always extract children for inventory/IOCs/UI.
+        # Per-child VT is on for manual Analyze; hunt deep-links set vt_children=False.
+        children_vt_enabled = bool(getattr(req, 'vt_children', True))
         if is_archive(meta['local_path']):
             extraction = extract_recursive(
                 meta['local_path'],
@@ -1154,38 +1158,52 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
                     display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
                     extraction.setdefault('errors', []).append(f"{display_name}: analysis failed after extraction: {e.__class__.__name__}: {str(e)[:180]}")
 
-            if pending_children:
+            skipped_child_vt = {
+                'status': 'skipped',
+                'verdict': 'skipped/hunt_root_vt_only',
+                'malicious': None,
+                'suspicious': None,
+                'permalink': None,
+                'names': [],
+                'message': 'Child VT skipped for hunt triage (root VT only); file still listed',
+            }
+
+            if pending_children and children_vt_enabled:
                 vt_results = await asyncio.gather(
                     *[_lookup_vt_bounded(item[2]['sha256']) for item in pending_children],
                     return_exceptions=True,
                 )
-                for (child, child_path, child_hashes, child_type, child_iocs), child_vt in zip(pending_children, vt_results):
-                    if isinstance(child_vt, Exception):
-                        display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
-                        extraction.setdefault('errors', []).append(
-                            f"{display_name}: VT lookup failed: {child_vt.__class__.__name__}: {str(child_vt)[:180]}"
-                        )
-                        continue
-                    inventory.append({
-                        'filename': child.get('filename'),
-                        'original_name': child.get('original_name'),
-                        'stored_name': child.get('stored_name'),
-                        'path': child.get('path') or child.get('filename'),
-                        'local_path': child_path,
-                        'extracted_to_disk': child.get('extracted_to_disk'),
-                        'blocked_by_local_av': child.get('blocked_by_local_av'),
-                        'analysis_note': child.get('analysis_note'),
-                        'file_type': child_type,
-                        'size_bytes': child_hashes.get('size_bytes'),
-                        'md5': child_hashes.get('md5'),
-                        'sha1': child_hashes.get('sha1'),
-                        'sha256': child_hashes.get('sha256'),
-                        'parent_archive': child.get('parent_archive'),
-                        'depth': child.get('depth'),
-                        'is_archive': child.get('is_archive'),
-                        'iocs': child_iocs,
-                        **_vt_inventory_fields(child_vt),
-                    })
+            else:
+                vt_results = [dict(skipped_child_vt) for _ in pending_children]
+
+            for (child, child_path, child_hashes, child_type, child_iocs), child_vt in zip(pending_children, vt_results):
+                if isinstance(child_vt, Exception):
+                    display_name = child.get('original_name') or child.get('filename') or child.get('path') or 'extracted file'
+                    extraction.setdefault('errors', []).append(
+                        f"{display_name}: VT lookup failed: {child_vt.__class__.__name__}: {str(child_vt)[:180]}"
+                    )
+                    continue
+                inventory.append({
+                    'filename': child.get('filename'),
+                    'original_name': child.get('original_name'),
+                    'stored_name': child.get('stored_name'),
+                    'path': child.get('path') or child.get('filename'),
+                    'local_path': child_path,
+                    'extracted_to_disk': child.get('extracted_to_disk'),
+                    'blocked_by_local_av': child.get('blocked_by_local_av'),
+                    'analysis_note': child.get('analysis_note'),
+                    'file_type': child_type,
+                    'size_bytes': child_hashes.get('size_bytes'),
+                    'md5': child_hashes.get('md5'),
+                    'sha1': child_hashes.get('sha1'),
+                    'sha256': child_hashes.get('sha256'),
+                    'parent_archive': child.get('parent_archive'),
+                    'depth': child.get('depth'),
+                    'is_archive': child.get('is_archive'),
+                    'iocs': child_iocs,
+                    **_vt_inventory_fields(child_vt),
+                })
+                if children_vt_enabled:
                     vt_reports.append(child_vt)
 
         for entry in inventory:
@@ -1218,14 +1236,21 @@ async def run_analysis(req: AnalyzeRequest, job_id: str | None = None) -> dict:
 
         vt_configured = vt_result.get('status') not in {'not_configured', None}
         vt_lookup_ok = vt_result.get('status') in {'found', 'not_found'}
-        children_vt_done = extracted_count > 0 and vt_configured and any(
-            x.get('vt_verdict') is not None for x in inventory[1:]
+        children_vt_done = (
+            children_vt_enabled
+            and extracted_count > 0
+            and vt_configured
+            and any(
+                x.get('vt_verdict') not in (None, 'skipped/hunt_root_vt_only')
+                for x in inventory[1:]
+            )
         )
         pipeline = {
             'downloaded': True,
             'hashed': True,
             'vt_lookup': vt_lookup_ok,
             'vt_status': vt_result.get('status'),
+            'vt_children_lookup_enabled': children_vt_enabled,
             'archive_extraction': bool(extraction.get('root_is_archive')),
             'children_hashed': extracted_count > 0,
             'children_vt_lookup': children_vt_done,

@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.43 — Hunt triage: extract children, root VT only
+
+- Hunt email **Open in RepoTriage** links use `vt_children=0`
+- Opening that link runs a normal job: root VT + archive extract + children listed in Files/Relations
+- **No VirusTotal calls for extracted children** on hunt triage (saves quota)
+- Manual Analyze (paste URL / Analyze button) still does full per-child VT
+
 ### v4.0.0-alpha.42 — Analyze keeps full child VT; hunt stays root-only
 
 - **Manual Analyze** restored: extract + per-child VirusTotal (all previous features)

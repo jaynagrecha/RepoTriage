@@ -146,7 +146,8 @@ function vtBadge(v){return `<span class="badge ${verdictClass(v)}">${esc(v||'unk
 function steps(mode){const el=document.getElementById('status'); const names=['Downloaded','SHA256 Generated','VT Checked','Archive Extracted','Children VT Checked','IOCs Extracted','ThreatFox Queried','MalwareBazaar Queried','URLHaus Queried','Feodo/SSLBL Checked','Executive Summary Generated']; if(mode!=='done'){el.innerHTML='<span class="step todo">○ Analysis in progress — pipeline running server-side…</span>'; return} el.innerHTML=names.map((n)=>`<span class="step done">✓ ${n}</span>`).join('')}
 async function refreshUsage(){try{const r=await fetch('/api/usage'); if(!r.ok)return; const u=await r.json(); const el=document.getElementById('usage'); if(!el)return; if(!u.enabled){el.innerHTML='<span>Usage limits: disabled</span>'; return} const rem=u.remaining_today; el.innerHTML=`<span>Daily quota: <b>${esc(u.used_today)}</b> / ${esc(u.free_daily_limit)} used</span><span>Remaining: <b>${rem==null?'∞':esc(rem)}</b></span><span>Active jobs: <b>${esc(u.active_jobs_for_ip||0)}</b> / ${esc(u.max_running_jobs_per_ip||2)}</span>`}catch(_){}}
 refreshUsage();
-async function analyze(){
+ let analyzeVtChildren=true;
+ async function analyze(){
  const url=document.getElementById('fileUrl').value.trim();
  if(!url)return alert('Paste a GitHub or GitLab file URL');
  const btn=document.getElementById('analyzeBtn');
@@ -156,9 +157,12 @@ async function analyze(){
  const st=document.getElementById('status');
  try{
    st.innerHTML='<span class="step todo">○ Creating server-side analysis job...</span>';
-   const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_url:url})});
+   const body={file_url:url, vt_children: analyzeVtChildren!==false};
+   const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
    const j=await r.json();
    if(!r.ok)throw new Error(apiDetail(j.detail)||'Job creation failed');
+   // Manual submits after a hunt deep-link should restore full child VT
+   analyzeVtChildren=true;
    refreshUsage();
    const jobId=j.job_id; currentJobId=jobId;
    let attempts=0;
@@ -778,12 +782,19 @@ function consumeDeepLink(){
   const url=(params.get('url')||params.get('file_url')||'').trim();
   const auto=['1','true','yes'].includes(String(params.get('auto')||'').toLowerCase());
   const src=(params.get('src')||'').toLowerCase();
+  const vtChildrenRaw=(params.get('vt_children')||'').toLowerCase();
   if(!url && !src) return;
   if(url){
     const input=document.getElementById('fileUrl');
     if(input) input.value=url;
   }
-  if(src==='repotrace'){
+  // Hunt email deep-links: extract children in UI, skip per-child VT
+  if(vtChildrenRaw === '0' || vtChildrenRaw === 'false' || vtChildrenRaw === 'no' || src === 'repo_hunt'){
+    analyzeVtChildren=false;
+  } else {
+    analyzeVtChildren=true;
+  }
+  if(src==='repotrace' || src==='repo_hunt'){
     document.getElementById('handoffBanner')?.classList.add('show');
   }
   // Clean query so refresh/share does not re-fire auto-submit
