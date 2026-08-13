@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.40 — Hunt OOM guard + GitHub 403 fallback
+
+- **Exit 137 / OOM:** financial repo-watch no longer loads whole files into RAM (stream-hash); caps repos/files/size per cycle (defaults: 8 repos, 25 files, 8MB)
+- Env: `REPO_HUNT_WATCH_MAX_REPOS`, `REPO_HUNT_WATCH_MAX_FILES`, `REPO_HUNT_WATCH_MAX_FILE_BYTES`
+- Hunt worker logs a compact summary (avoids huge JSON in memory)
+- **Analyze GitHub 403:** if Contents API rejects the PAT, fall back to `raw.githubusercontent.com` for public files
+
 ### v4.0.0-alpha.39 — GitLab financial / WU repo watch
 
 - Same keyword repo watch as GitHub, now on **GitLab.com** (+ optional `GITLAB_BASE_URL` self-hosted)

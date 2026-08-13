@@ -68,7 +68,7 @@ class TestFinancialRepoWatchPipeline(unittest.IsolatedAsyncioTestCase):
             base = Path(tmp)
             payload = b'PK\x03\x04fake-archive-bytes'
 
-            async def fake_download(url, out_dir):
+            async def fake_download(url, out_dir, max_bytes=None):
                 out = Path(out_dir)
                 out.mkdir(parents=True, exist_ok=True)
                 path = out / 'Wu_Receipt_System_Screenshot.7z'
@@ -77,6 +77,7 @@ class TestFinancialRepoWatchPipeline(unittest.IsolatedAsyncioTestCase):
                     'local_path': str(path),
                     'filename': 'Wu_Receipt_System_Screenshot.7z',
                     'path': 'drop/Wu_Receipt_System_Screenshot.7z',
+                    'downloaded_bytes': len(payload),
                 }
 
             async def fake_vt(sha256, hit, cfg, *, base_dir=None):
@@ -121,6 +122,9 @@ class TestFinancialRepoWatchPipeline(unittest.IsolatedAsyncioTestCase):
                 gitlab_search_terms=[],
                 repo_watch_commits=10,
                 repo_watch_newest_files=5,
+                repo_watch_max_repos=8,
+                repo_watch_max_files=25,
+                repo_watch_max_file_bytes=8 * 1024 * 1024,
                 vt_confirm=True,
                 vt_api_key='vt',
                 vt_livehunt_rule_id='',

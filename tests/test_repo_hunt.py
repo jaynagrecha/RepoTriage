@@ -127,12 +127,12 @@ class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):
             })
             payload = _jsoutprox_payload()
 
-            async def fake_download(url, out_dir):
+            async def fake_download(url, out_dir, max_bytes=None):
                 out = Path(out_dir)
                 out.mkdir(parents=True, exist_ok=True)
                 path = out / 'payload.js'
                 path.write_bytes(payload)
-                return {'local_path': str(path), 'filename': 'payload.js', 'path': 'payload.js'}
+                return {'local_path': str(path), 'filename': 'payload.js', 'path': 'payload.js', 'downloaded_bytes': len(payload)}
 
             cfg = RepoHuntConfig(
                 enabled=True,
@@ -151,6 +151,9 @@ class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):
                 gitlab_search_terms=[],
                 repo_watch_commits=10,
                 repo_watch_newest_files=5,
+                repo_watch_max_repos=8,
+                repo_watch_max_files=25,
+                repo_watch_max_file_bytes=8 * 1024 * 1024,
                 vt_confirm=False,
                 vt_api_key='',
                 vt_livehunt_rule_id='24949411305',

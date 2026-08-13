@@ -106,6 +106,9 @@ class RepoHuntConfig:
     gitlab_search_terms: list[str]
     repo_watch_commits: int
     repo_watch_newest_files: int
+    repo_watch_max_repos: int
+    repo_watch_max_files: int
+    repo_watch_max_file_bytes: int
     vt_confirm: bool
     vt_api_key: str
     vt_livehunt_rule_id: str
@@ -152,6 +155,10 @@ class RepoHuntConfig:
             gitlab_search_terms=gl_terms,
             repo_watch_commits=_int('REPO_HUNT_REPO_WATCH_COMMITS', 10),
             repo_watch_newest_files=_int('REPO_HUNT_REPO_WATCH_NEWEST_FILES', 5),
+            # Starter-plan OOM guardrails (exit 137). Override via Render env if needed.
+            repo_watch_max_repos=_int('REPO_HUNT_WATCH_MAX_REPOS', 8),
+            repo_watch_max_files=_int('REPO_HUNT_WATCH_MAX_FILES', 25),
+            repo_watch_max_file_bytes=_int('REPO_HUNT_WATCH_MAX_FILE_BYTES', 8 * 1024 * 1024),
             vt_confirm=_bool('REPO_HUNT_VT_CONFIRM', True),
             vt_api_key=(os.getenv('VT_API_KEY') or '').strip(),
             vt_livehunt_rule_id=(os.getenv('VT_LIVEHUNT_RULE_ID') or '').strip(),

@@ -766,6 +766,15 @@ def _resolve_download_target(meta: dict) -> tuple[str, dict[str, str], str]:
     return meta['download_url'], _download_headers(meta), meta.get('source_type') or 'direct'
 
 
+def _github_raw_fallback_target(meta: dict) -> tuple[str, dict[str, str], str] | None:
+    """Public/raw URL fallback when Contents API rejects the token (403/401)."""
+    raw = (meta.get('download_url') or '').strip()
+    if not raw or meta.get('provider') != 'github':
+        return None
+    # Prefer unauthenticated raw for public files — avoids bad/limited PAT 403s.
+    return raw, {'User-Agent': 'RepoTriage'}, 'github_raw_fallback'
+
+
 def _http_error_message(meta: dict, status_code: int, *, via: str) -> str:
     provider = meta.get('provider') or 'source'
     if provider == 'gitlab':
@@ -820,30 +829,54 @@ async def download_file(url: str, out_dir: str | Path = 'downloads', max_bytes: 
 
     download_url, headers, via = _resolve_download_target(meta)
     source_host = urlparse(meta['display_url']).netloc.lower().split(':', 1)[0]
-    downloaded = 0
+    attempts: list[tuple[str, dict[str, str], str]] = [(download_url, headers, via)]
+    raw_fallback = _github_raw_fallback_target(meta)
+    if via == 'github_contents_api' and raw_fallback:
+        attempts.append(raw_fallback)
+
+    last_status = 0
+    last_via = via
     async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
-        async with client.stream('GET', download_url, headers=headers) as resp:
-            final_host = urlparse(str(resp.url)).netloc.lower().split(':', 1)[0]
-            if not _allowed_download_host(final_host, source_host=source_host):
-                provider = meta.get('provider') or 'source'
-                raise DownloadError(f'Download blocked: redirect left allowed {provider} hosts ({final_host})')
-            if resp.status_code >= 400:
-                raise DownloadError(_http_error_message(meta, resp.status_code, via=via))
-            with out_path.open('wb') as f:
-                async for chunk in resp.aiter_bytes(1024 * 256):
-                    downloaded += len(chunk)
-                    if downloaded > max_bytes:
-                        try:
-                            out_path.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-                        raise DownloadError(f'File exceeds safety limit of {max_bytes} bytes')
-                    f.write(chunk)
-    meta.update({
-        'local_path': str(out_path),
-        'filename': filename,
-        'downloaded_bytes': downloaded,
-        'download_via': via,
-        'resolved_download_url': download_url if via != 'github_contents_api' else download_url.split('?', 1)[0],
-    })
-    return meta
+        for attempt_url, attempt_headers, attempt_via in attempts:
+            last_via = attempt_via
+            downloaded = 0
+            async with client.stream('GET', attempt_url, headers=attempt_headers) as resp:
+                final_host = urlparse(str(resp.url)).netloc.lower().split(':', 1)[0]
+                if not _allowed_download_host(final_host, source_host=source_host):
+                    provider = meta.get('provider') or 'source'
+                    raise DownloadError(
+                        f'Download blocked: redirect left allowed {provider} hosts ({final_host})'
+                    )
+                if resp.status_code >= 400:
+                    last_status = resp.status_code
+                    # Contents API 401/403 with a limited/broken PAT → try public raw once.
+                    if (
+                        attempt_via == 'github_contents_api'
+                        and resp.status_code in {401, 403}
+                        and len(attempts) > 1
+                    ):
+                        continue
+                    raise DownloadError(_http_error_message(meta, resp.status_code, via=attempt_via))
+                with out_path.open('wb') as f:
+                    async for chunk in resp.aiter_bytes(1024 * 256):
+                        downloaded += len(chunk)
+                        if downloaded > max_bytes:
+                            try:
+                                out_path.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                            raise DownloadError(f'File exceeds safety limit of {max_bytes} bytes')
+                        f.write(chunk)
+            meta.update({
+                'local_path': str(out_path),
+                'filename': filename,
+                'downloaded_bytes': downloaded,
+                'download_via': attempt_via,
+                'resolved_download_url': (
+                    attempt_url if attempt_via != 'github_contents_api'
+                    else attempt_url.split('?', 1)[0]
+                ),
+            })
+            return meta
+
+    raise DownloadError(_http_error_message(meta, last_status or 403, via=last_via))

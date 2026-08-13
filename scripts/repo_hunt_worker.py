@@ -90,7 +90,25 @@ async def _run_once(base: Path, cfg: RepoHuntConfig) -> int:
             'message': 'Hunt cycle failed; worker will continue on next interval',
         }), flush=True)
         return 2
-    print(json.dumps(report, indent=2, default=str), flush=True)
+    # Compact log — full findings already persisted via HuntState.write_last_run.
+    summary = {
+        'ok': report.get('ok'),
+        'started_at': report.get('started_at'),
+        'finished_at': report.get('finished_at'),
+        'sources': report.get('sources'),
+        'candidates': report.get('candidates'),
+        'downloaded': report.get('downloaded'),
+        'local_matches': report.get('local_matches'),
+        'financial_repo_files': report.get('financial_repo_files'),
+        'watch_skipped_oversized': report.get('watch_skipped_oversized'),
+        'new_findings': report.get('new_findings'),
+        'js_findings': report.get('js_findings'),
+        'wu_findings': report.get('wu_findings'),
+        'email': report.get('email'),
+        'wu_email': report.get('wu_email'),
+        'errors': (report.get('errors') or [])[:10],
+    }
+    print(json.dumps(summary, indent=2, default=str), flush=True)
     if not report.get('ok') and report.get('error'):
         return 2
     if report.get('email') and report['email'].get('ok') is False and not report['email'].get('skipped'):

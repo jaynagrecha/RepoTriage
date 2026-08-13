@@ -49,18 +49,41 @@ def _is_repo_watch_file(cand: Candidate) -> bool:
     return bool((cand.extra or {}).get('repo_watch_file')) or cand.source == 'financial_repo_watch'
 
 
-async def _fetch_candidate_bytes(candidate: Candidate, out_dir: Path) -> tuple[bytes, str, str]:
-    """Return (data, filename, sha256)."""
-    meta = await download_file(candidate.url, out_dir=out_dir)
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as fh:
+        while True:
+            chunk = fh.read(1024 * 256)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+async def _fetch_candidate_bytes(
+    candidate: Candidate,
+    out_dir: Path,
+    *,
+    max_bytes: int | None = None,
+    keep_bytes: bool = True,
+) -> tuple[bytes, str, str, int]:
+    """Return (data_or_empty, filename, sha256, size).
+
+    For VT-hash-only paths set keep_bytes=False to avoid loading whole files into RAM.
+    """
+    meta = await download_file(candidate.url, out_dir=out_dir, max_bytes=max_bytes)
     path = Path(meta['local_path'])
-    data = path.read_bytes()
-    sha256 = hashlib.sha256(data).hexdigest()
+    size = int(meta.get('downloaded_bytes') or path.stat().st_size)
+    sha256 = _sha256_file(path)
     filename = meta.get('filename') or path.name
+    data = b''
+    if keep_bytes:
+        data = path.read_bytes()
     try:
         path.unlink(missing_ok=True)
     except Exception:
         pass
-    return data, filename, sha256
+    return data, filename, sha256, size
 
 
 async def collect_candidates(
@@ -84,14 +107,16 @@ async def collect_candidates(
 
     wu_repos = await _safe('github_repo_search_wu', discover_wu_github_repos(cfg))
     sources['github_repo_search_wu'] = len(wu_repos)
+    wu_repos = wu_repos[: max(0, int(cfg.repo_watch_max_repos))]
 
-    # Expand keyword-matched repos → last N commits / top M newest files (no size cap).
+    # Expand keyword-matched repos → last N commits / top M newest files.
     repo_files = await _safe('financial_repo_watch', expand_financial_repos(cfg, wu_repos))
     sources['financial_repo_watch'] = len(repo_files)
     all_items.extend(repo_files)
 
     gl_repos = await _safe('gitlab_repo_search_wu', discover_wu_gitlab_projects(cfg))
     sources['gitlab_repo_search_wu'] = len(gl_repos)
+    gl_repos = gl_repos[: max(0, int(cfg.repo_watch_max_repos))]
     gl_files = await _safe('financial_repo_watch_gitlab', expand_financial_gitlab_repos(cfg, gl_repos))
     sources['financial_repo_watch_gitlab'] = len(gl_files)
     all_items.extend(gl_files)
@@ -110,11 +135,10 @@ async def collect_candidates(
     if errors:
         sources['discovery_errors'] = len(errors)
 
-    # Repo-watch files are not truncated by max_candidates (user: no other caps).
-    # Cap only classic code-search / org / webhook candidates.
     classic = [c for c in all_items if not _is_repo_watch_file(c)]
     watch = [c for c in all_items if _is_repo_watch_file(c)]
-    deduped = _dedupe_candidates(classic)[: cfg.max_candidates] + _dedupe_candidates(watch)
+    watch = _dedupe_candidates(watch)[: max(0, int(cfg.repo_watch_max_files))]
+    deduped = _dedupe_candidates(classic)[: cfg.max_candidates] + watch
     return deduped, sources, errors
 
 
@@ -166,6 +190,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         'wu_vt_clean_skips': 0,
         'financial_repo_files': 0,
         'financial_repo_vt_clean': 0,
+        'watch_skipped_oversized': 0,
         'new_findings': 0,
         'findings': [],
         'email': None,
@@ -188,11 +213,22 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
 
     findings: list[Finding] = []
     for cand in candidates:
+        is_watch = _is_repo_watch_file(cand)
         try:
-            data, filename, sha256 = await _fetch_candidate_bytes(cand, dl_dir)
+            data, filename, sha256, filesize = await _fetch_candidate_bytes(
+                cand,
+                dl_dir,
+                max_bytes=(cfg.repo_watch_max_file_bytes if is_watch else None),
+                keep_bytes=not is_watch,
+            )
             report['downloaded'] += 1
         except DownloadError as exc:
-            report['errors'].append(f'{cand.url}: download {exc}')
+            msg = str(exc)
+            # Oversized watch files are expected on starter plans — don't treat as hard errors.
+            if is_watch and 'exceeds safety limit' in msg:
+                report['watch_skipped_oversized'] += 1
+            else:
+                report['errors'].append(f'{cand.url}: download {exc}')
             continue
         except Exception as exc:
             report['errors'].append(f'{cand.url}: {exc.__class__.__name__}: {exc}')
@@ -203,13 +239,13 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
             continue
 
         # --- Financial / WU keyword repo watch: any file → VT → email if malicious ---
-        if _is_repo_watch_file(cand) and cfg.wu_hunt_enabled:
+        if is_watch and cfg.wu_hunt_enabled:
             report['financial_repo_files'] += 1
             report['local_matches'] += 1
             seed = DetectionHit(
                 rule=FINANCIAL_RULE_ID,
                 matched_strings=_repo_watch_keywords(cand),
-                filesize=len(data),
+                filesize=filesize,
                 local_match=True,
                 notes=[
                     f'Repo keyword watch: {cand.repo} matched discovery query; '
@@ -226,7 +262,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                     detection=DetectionHit(
                         rule=FINANCIAL_RULE_ID,
                         matched_strings=list(confirmed.matched_strings),
-                        filesize=len(data),
+                        filesize=filesize,
                         local_match=True,
                         vt_confirm={
                             **dict(vt),
@@ -261,7 +297,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         )
         wu_hit = _wu_hit_from_names(
             names=[str(x) for x in name_pool if x],
-            filesize=len(data),
+            filesize=filesize or len(data),
             livehunt_rule_id=cfg.vt_livehunt_wu_rule_id,
         ) if cfg.wu_hunt_enabled else None
 
@@ -307,7 +343,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
             wu_confirmed = DetectionHit(
                 rule=WU_RULE_ID,
                 matched_strings=keywords,
-                filesize=len(data),
+                filesize=filesize or len(data),
                 local_match=True,
                 vt_confirm={
                     **dict(vt),
