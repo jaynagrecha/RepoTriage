@@ -69,6 +69,8 @@ class TestCollectCandidatesSoftFail(unittest.IsolatedAsyncioTestCase):
             with patch('app.modules.repo_hunt.pipeline.discover_github_code_search', side_effect=boom), \
                  patch('app.modules.repo_hunt.pipeline.discover_wu_github_repos', new=AsyncMock(return_value=[])), \
                  patch('app.modules.repo_hunt.pipeline.expand_financial_repos', new=AsyncMock(return_value=[])), \
+                 patch('app.modules.repo_hunt.pipeline.discover_wu_gitlab_projects', new=AsyncMock(return_value=[])), \
+                 patch('app.modules.repo_hunt.pipeline.expand_financial_gitlab_repos', new=AsyncMock(return_value=[])), \
                  patch('app.modules.repo_hunt.pipeline.discover_watched_orgs_users', new=AsyncMock(return_value=[])), \
                  patch('app.modules.repo_hunt.pipeline.discover_webhook_queue', return_value=[]):
                 candidates, sources, errors = await collect_candidates(cfg, state)

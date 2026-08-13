@@ -4,6 +4,13 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.39 — GitLab financial / WU repo watch
+
+- Same keyword repo watch as GitHub, now on **GitLab.com** (+ optional `GITLAB_BASE_URL` self-hosted)
+- Uses `GITLAB_TOKEN`; last 10 commits → top 5 newest files → VT → email if malicious
+- Optional `REPO_HUNT_GITLAB_SEARCH_TERMS` CSV override (defaults mirror WU/remittance keywords)
+- MTCNN face-detection noise filtered for the `mtcn` term
+
 ### v4.0.0-alpha.38 — Financial / WU keyword repo watch
 
 - **Global GitHub** repo search (name/description) every hunt cycle — not limited to `REPO_HUNT_GITHUB_ORGS` / `USERS`

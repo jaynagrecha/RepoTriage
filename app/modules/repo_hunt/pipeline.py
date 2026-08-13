@@ -17,6 +17,7 @@ from .detect.wu_keywords import (
     scan_wu_names,
 )
 from .discovery.github_search import discover_github_code_search, discover_wu_github_repos
+from .discovery.gitlab_search import discover_wu_gitlab_projects, expand_financial_gitlab_repos
 from .discovery.org_watch import discover_watched_orgs_users
 from .discovery.repo_commit_scan import RULE_ID as FINANCIAL_RULE_ID
 from .discovery.repo_commit_scan import expand_financial_repos
@@ -88,6 +89,12 @@ async def collect_candidates(
     repo_files = await _safe('financial_repo_watch', expand_financial_repos(cfg, wu_repos))
     sources['financial_repo_watch'] = len(repo_files)
     all_items.extend(repo_files)
+
+    gl_repos = await _safe('gitlab_repo_search_wu', discover_wu_gitlab_projects(cfg))
+    sources['gitlab_repo_search_wu'] = len(gl_repos)
+    gl_files = await _safe('financial_repo_watch_gitlab', expand_financial_gitlab_repos(cfg, gl_repos))
+    sources['financial_repo_watch_gitlab'] = len(gl_files)
+    all_items.extend(gl_files)
 
     watched = await _safe('org_watch', discover_watched_orgs_users(cfg))
     sources['org_watch'] = len(watched)

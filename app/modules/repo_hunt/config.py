@@ -62,6 +62,31 @@ _DEFAULT_WU_CODE_QUERIES = (
     'filename:moneygram',
 )
 
+# GitLab project search terms (substring search — not GitHub qualifier syntax).
+_DEFAULT_GITLAB_SEARCH_TERMS = (
+    'mtcn',
+    'westernunion',
+    'western union',
+    'western_union',
+    'westernunionbank',
+    'wu_receipt',
+    'wureceipt',
+    'wu-receipt',
+    'wupos',
+    'pagofacil',
+    'pago_facil',
+    'moneygram',
+    'money_gram',
+    'remittance',
+    'moneytransfer',
+    'money_transfer',
+    'remitly',
+    'worldremit',
+    'xoom',
+    'riaremit',
+    'transfast',
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RepoHuntConfig:
@@ -76,6 +101,9 @@ class RepoHuntConfig:
     search_max_results: int
     wu_hunt_enabled: bool
     wu_repo_search_queries: list[str]
+    gitlab_token: str
+    gitlab_base_url: str
+    gitlab_search_terms: list[str]
     repo_watch_commits: int
     repo_watch_newest_files: int
     vt_confirm: bool
@@ -106,6 +134,7 @@ class RepoHuntConfig:
         if wu_enabled and not extra:
             extra = list(_DEFAULT_WU_CODE_QUERIES)
         wu_repo_q = _csv('REPO_HUNT_WU_REPO_QUERIES') or list(_DEFAULT_WU_REPO_QUERIES)
+        gl_terms = _csv('REPO_HUNT_GITLAB_SEARCH_TERMS') or list(_DEFAULT_GITLAB_SEARCH_TERMS)
         return cls(
             enabled=_bool('REPO_HUNT_ENABLED', False),
             min_bytes=_int('REPO_HUNT_MIN_BYTES', 500 * 1024),
@@ -118,6 +147,9 @@ class RepoHuntConfig:
             search_max_results=_int('REPO_HUNT_SEARCH_MAX_RESULTS', 30),
             wu_hunt_enabled=wu_enabled,
             wu_repo_search_queries=wu_repo_q,
+            gitlab_token=(os.getenv('GITLAB_TOKEN') or '').strip(),
+            gitlab_base_url=(os.getenv('GITLAB_BASE_URL') or '').strip().rstrip('/'),
+            gitlab_search_terms=gl_terms,
             repo_watch_commits=_int('REPO_HUNT_REPO_WATCH_COMMITS', 10),
             repo_watch_newest_files=_int('REPO_HUNT_REPO_WATCH_NEWEST_FILES', 5),
             vt_confirm=_bool('REPO_HUNT_VT_CONFIRM', True),

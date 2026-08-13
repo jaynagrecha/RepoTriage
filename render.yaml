@@ -102,6 +102,12 @@ services:
         sync: false
       - key: GITHUB_TOKEN
         sync: false
+      - key: GITLAB_TOKEN
+        sync: false
+      - key: GITLAB_BASE_URL
+        sync: false
+      - key: REPO_HUNT_GITLAB_SEARCH_TERMS
+        sync: false
       - key: VT_API_KEY
         sync: false
       - key: VT_LIVEHUNT_RULE_ID
