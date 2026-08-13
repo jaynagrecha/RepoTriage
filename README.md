@@ -4,11 +4,15 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.42 — Analyze keeps full child VT; hunt stays root-only
+
+- **Manual Analyze** restored: extract + per-child VirusTotal (all previous features)
+- **Global hunt** remains root-candidate VT only (no archive extraction / no child VT) to protect quota
+- Removed Analyze `VT_CHILDREN_LOOKUP` gate introduced in alpha.41
+
 ### v4.0.0-alpha.41 — Root-only VirusTotal by default
 
-- **Analyze:** still extracts archives for hashes/IOCs/inventory, but **VT queries the root file only** by default (saves API quota)
-- Set `VT_CHILDREN_LOOKUP=true` to restore per-child VirusTotal lookups
-- Global hunt was already root-candidate-only (no archive child VT)
+- Superseded by alpha.42 for Analyze; hunt root-only behavior retained
 
 ### v4.0.0-alpha.40 — Hunt OOM guard + GitHub 403 fallback
 

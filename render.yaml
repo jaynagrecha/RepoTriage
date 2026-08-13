@@ -37,8 +37,6 @@ services:
         sync: false
       - key: VT_API_KEY
         sync: false
-      - key: VT_CHILDREN_LOOKUP
-        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

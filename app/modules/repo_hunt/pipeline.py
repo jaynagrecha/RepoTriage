@@ -238,7 +238,7 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         if state.is_seen(dedup_key):
             continue
 
-        # --- Financial / WU keyword repo watch: any file → VT → email if malicious ---
+        # --- Financial / WU keyword repo watch: root file hash → VT only (no extract/children) ---
         if is_watch and cfg.wu_hunt_enabled:
             report['financial_repo_files'] += 1
             report['local_matches'] += 1
