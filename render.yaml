@@ -52,6 +52,13 @@ services:
         value: "true"
       - key: REPO_HUNT_INTERVAL_SECONDS
         value: "300"
+      # Global GitHub WU/financial keyword repo watch (not limited to ORGS/USERS)
+      - key: REPO_HUNT_WU_ENABLED
+        value: "true"
+      - key: REPO_HUNT_REPO_WATCH_COMMITS
+        value: "10"
+      - key: REPO_HUNT_REPO_WATCH_NEWEST_FILES
+        value: "5"
       - key: GITHUB_TOKEN
         sync: false
       - key: VT_API_KEY

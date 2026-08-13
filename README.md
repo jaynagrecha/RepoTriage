@@ -6,11 +6,12 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ### v4.0.0-alpha.38 — Financial / WU keyword repo watch
 
-- Primary hunt path: discover GitHub repos by **WU + remittance/financial keywords** (name/description)
-- For each matching repo: inspect **last 10 commits**, take **top 5 newest files** (no size cap)
-- **VT malicious > 0** on any of those files → `[RepoTriage WU/Financial]` email (no LiveHunt filename token required)
-- Keywords include westernunion / wu_receipt / mtcn / wupos / pagofacil / moneygram / remittance / remitly / worldremit / xoom / …
-- Env: `REPO_HUNT_REPO_WATCH_COMMITS` (default 10), `REPO_HUNT_REPO_WATCH_NEWEST_FILES` (default 5), `REPO_HUNT_WU_REPO_QUERIES` override
+- **Global GitHub** repo search (name/description) every hunt cycle — not limited to `REPO_HUNT_GITHUB_ORGS` / `USERS`
+- Keywords: WU + remittance/financial bait (westernunion / wu_receipt / mtcn / wupos / pagofacil / moneygram / remittance / remitly / worldremit / xoom / …)
+- For each matching repo: **last 10 commits** → **top 5 newest files** (no size cap) → VirusTotal
+- **VT malicious > 0** → `[RepoTriage WU/Financial]` email (no LiveHunt filename token required)
+- Worker defaults: `REPO_HUNT_LOOP=true`, `REPO_HUNT_INTERVAL_SECONDS=300` (every 5 minutes)
+- Env: `REPO_HUNT_REPO_WATCH_COMMITS`, `REPO_HUNT_REPO_WATCH_NEWEST_FILES`, `REPO_HUNT_WU_REPO_QUERIES` override
 
 ### v4.0.0-alpha.37 — WU/MTCN vs MTCNN false positives
 
