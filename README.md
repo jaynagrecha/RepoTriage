@@ -4,6 +4,12 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.41 — Root-only VirusTotal by default
+
+- **Analyze:** still extracts archives for hashes/IOCs/inventory, but **VT queries the root file only** by default (saves API quota)
+- Set `VT_CHILDREN_LOOKUP=true` to restore per-child VirusTotal lookups
+- Global hunt was already root-candidate-only (no archive child VT)
+
 ### v4.0.0-alpha.40 — Hunt OOM guard + GitHub 403 fallback
 
 - **Exit 137 / OOM:** financial repo-watch no longer loads whole files into RAM (stream-hash); caps repos/files/size per cycle (defaults: 8 repos, 25 files, 8MB)
