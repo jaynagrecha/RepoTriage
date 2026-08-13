@@ -18,6 +18,8 @@ from .detect.wu_keywords import (
 )
 from .discovery.github_search import discover_github_code_search, discover_wu_github_repos
 from .discovery.org_watch import discover_watched_orgs_users
+from .discovery.repo_commit_scan import RULE_ID as FINANCIAL_RULE_ID
+from .discovery.repo_commit_scan import expand_financial_repos
 from .discovery.webhook_queue import discover_webhook_queue
 from .notify.smtp_mailer import build_findings_email, send_email
 from .state import HuntState
@@ -40,6 +42,10 @@ def _triage_link(cfg: RepoHuntConfig, file_url: str) -> str:
     if not cfg.triage_base_url:
         return ''
     return f"{cfg.triage_base_url}/?url={quote(file_url, safe='')}&auto=1&src=repotrace"
+
+
+def _is_repo_watch_file(cand: Candidate) -> bool:
+    return bool((cand.extra or {}).get('repo_watch_file')) or cand.source == 'financial_repo_watch'
 
 
 async def _fetch_candidate_bytes(candidate: Candidate, out_dir: Path) -> tuple[bytes, str, str]:
@@ -77,7 +83,11 @@ async def collect_candidates(
 
     wu_repos = await _safe('github_repo_search_wu', discover_wu_github_repos(cfg))
     sources['github_repo_search_wu'] = len(wu_repos)
-    all_items.extend(wu_repos)
+
+    # Expand keyword-matched repos → last N commits / top M newest files (no size cap).
+    repo_files = await _safe('financial_repo_watch', expand_financial_repos(cfg, wu_repos))
+    sources['financial_repo_watch'] = len(repo_files)
+    all_items.extend(repo_files)
 
     watched = await _safe('org_watch', discover_watched_orgs_users(cfg))
     sources['org_watch'] = len(watched)
@@ -93,7 +103,11 @@ async def collect_candidates(
     if errors:
         sources['discovery_errors'] = len(errors)
 
-    deduped = _dedupe_candidates(all_items)[: cfg.max_candidates]
+    # Repo-watch files are not truncated by max_candidates (user: no other caps).
+    # Cap only classic code-search / org / webhook candidates.
+    classic = [c for c in all_items if not _is_repo_watch_file(c)]
+    watch = [c for c in all_items if _is_repo_watch_file(c)]
+    deduped = _dedupe_candidates(classic)[: cfg.max_candidates] + _dedupe_candidates(watch)
     return deduped, sources, errors
 
 
@@ -114,7 +128,7 @@ def _wu_hit_from_names(
 
 
 def _wu_passes_vt(hit: DetectionHit) -> bool:
-    """LiveHunt condition: analysis_stats.malicious > 0."""
+    """VT malicious > 0 (or explicit malicious verdict)."""
     vt = hit.vt_confirm or {}
     try:
         malicious = int(vt.get('malicious') or 0)
@@ -122,6 +136,11 @@ def _wu_passes_vt(hit: DetectionHit) -> bool:
         malicious = 0
     verdict = str(vt.get('verdict') or '').lower()
     return malicious > 0 or verdict == 'malicious'
+
+
+def _repo_watch_keywords(cand: Candidate) -> list[str]:
+    q = str((cand.extra or {}).get('query') or '').strip()
+    return [q] if q else ['financial_repo_watch']
 
 
 async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, send: bool = True) -> dict[str, Any]:
@@ -138,6 +157,8 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
         'local_matches': 0,
         'wu_name_matches': 0,
         'wu_vt_clean_skips': 0,
+        'financial_repo_files': 0,
+        'financial_repo_vt_clean': 0,
         'new_findings': 0,
         'findings': [],
         'email': None,
@@ -172,6 +193,56 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
 
         dedup_key = sha256 or cand.url
         if state.is_seen(dedup_key):
+            continue
+
+        # --- Financial / WU keyword repo watch: any file → VT → email if malicious ---
+        if _is_repo_watch_file(cand) and cfg.wu_hunt_enabled:
+            report['financial_repo_files'] += 1
+            report['local_matches'] += 1
+            seed = DetectionHit(
+                rule=FINANCIAL_RULE_ID,
+                matched_strings=_repo_watch_keywords(cand),
+                filesize=len(data),
+                local_match=True,
+                notes=[
+                    f'Repo keyword watch: {cand.repo} matched discovery query; '
+                    f'scanned recent file {cand.path or filename}',
+                ],
+            )
+            confirmed = await confirm_with_virustotal(sha256, seed, cfg, base_dir=base_dir)
+            vt = confirmed.vt_confirm or {}
+            if _wu_passes_vt(confirmed):
+                findings.append(Finding(
+                    candidate=cand,
+                    sha256=sha256,
+                    filename=filename,
+                    detection=DetectionHit(
+                        rule=FINANCIAL_RULE_ID,
+                        matched_strings=list(confirmed.matched_strings),
+                        filesize=len(data),
+                        local_match=True,
+                        vt_confirm={
+                            **dict(vt),
+                            'livehunt_rule_id': cfg.vt_livehunt_wu_rule_id or WU_LIVEHUNT_ID,
+                        },
+                        notes=list(confirmed.notes),
+                    ),
+                    triage_url=_triage_link(cfg, cand.url),
+                ))
+                state.mark_seen(dedup_key, {
+                    'url': cand.url,
+                    'source': cand.source,
+                    'rules': [FINANCIAL_RULE_ID],
+                    'repo': cand.repo,
+                })
+            else:
+                report['financial_repo_vt_clean'] += 1
+                state.mark_seen(dedup_key, {
+                    'url': cand.url,
+                    'sha256': sha256,
+                    'note': 'financial_repo_vt_clean',
+                    'source': cand.source,
+                })
             continue
 
         name_pool = [filename, cand.path, cand.repo, cand.url, (cand.extra or {}).get('name')]
@@ -213,7 +284,6 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                 vt_confirm=dict(vt),
                 notes=list(js_hit.notes) + list(confirmed.notes),
             )
-            # Prefer JsOutProx livehunt id when configured
             if cfg.vt_livehunt_rule_id:
                 js_confirmed.vt_confirm['livehunt_rule_id'] = cfg.vt_livehunt_rule_id
             findings.append(Finding(
@@ -251,7 +321,6 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                 ))
                 emitted_rules.add(WU_RULE_ID)
             else:
-                # Expected LiveHunt gate — not an operational error; keep errors[] for failures.
                 report['wu_vt_clean_skips'] += 1
 
         if emitted_rules:
@@ -262,7 +331,6 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                 'repo': cand.repo,
             })
         else:
-            # Checked once — do not re-download every cron cycle while VT still clean
             state.mark_seen(dedup_key, {
                 'url': cand.url,
                 'sha256': sha256,
@@ -273,8 +341,8 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
     report['new_findings'] = len(findings)
     report['findings'] = [f.to_dict() for f in findings[: cfg.max_findings_email]]
 
-    js_findings = [f for f in findings if f.detection.rule != WU_RULE_ID]
-    wu_findings = [f for f in findings if f.detection.rule == WU_RULE_ID]
+    js_findings = [f for f in findings if f.detection.rule not in {WU_RULE_ID, FINANCIAL_RULE_ID}]
+    wu_findings = [f for f in findings if f.detection.rule in {WU_RULE_ID, FINANCIAL_RULE_ID}]
     report['js_findings'] = len(js_findings)
     report['wu_findings'] = len(wu_findings)
 
@@ -291,11 +359,11 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                     'candidates': report['candidates'],
                     'local_matches': report['local_matches'],
                     'wu_name_matches': report['wu_name_matches'],
+                    'financial_repo_files': report['financial_repo_files'],
                 },
             )
             report['email'] = send_email(msg, cfg)
         if wu_findings and cfg.analysis_alert_email:
-            # Same WU/MTCN report as Analyze — but from the 5-minute scheduled scan
             from .notify.smtp_mailer import build_analysis_wu_alert_email
 
             hits = []
@@ -313,6 +381,8 @@ async def run_repo_hunt(base_dir: Path, *, cfg: RepoHuntConfig | None = None, se
                     'popular_threat_label': vt.get('popular_threat_label'),
                     'family_labels': vt.get('family_labels') or [],
                     'triage_url': f.triage_url,
+                    'rule': f.detection.rule,
+                    'repo': f.candidate.repo,
                 })
             wu_msg = build_analysis_wu_alert_email(
                 cfg=cfg,

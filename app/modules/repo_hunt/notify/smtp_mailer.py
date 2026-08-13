@@ -42,10 +42,12 @@ def build_findings_email(findings: list[Finding], cfg: RepoHuntConfig, *, run_me
         f"Candidates checked: {run_meta.get('candidates')}",
         f"Local matches: {run_meta.get('local_matches')}",
         f"WU/MTCN name matches: {run_meta.get('wu_name_matches', 0)}",
+        f"Financial repo files scanned: {run_meta.get('financial_repo_files', 0)}",
         '',
         'Rules covered:',
         '  - potential_jsoutprox_js (JsOutProx LiveHunt mirror)',
         '  - DETECT_GTI_MaliciousFilesWithWUKeywords (WU/MTCN filename + VT malicious>0)',
+        '  - FINANCIAL_REPO_VT_MALICIOUS (keyword-matched repo recent files + VT malicious>0)',
         '',
     ]
     cards: list[str] = []
@@ -116,17 +118,18 @@ def build_analysis_wu_alert_email(
     rule_id = cfg.vt_livehunt_wu_rule_id or '20744291635'
     if mode in {'scheduled', 'hunt', 'loop', 'worker'}:
         msg['Subject'] = (
-            f'[RepoTriage WU/MTCN] {len(hits)} hit(s) '
-            f'(DETECT_GTI_MaliciousFilesWithWUKeywords · scheduled scan)'
+            f'[RepoTriage WU/Financial] {len(hits)} hit(s) '
+            f'(keyword repo watch · VT malicious · scheduled scan)'
         )
-        title = 'WU/MTCN scheduled scan hit'
+        title = 'WU/Financial repo watch hit'
         subtitle = (
-            'Scheduled WU/MTCN scan (every REPO_HUNT_INTERVAL_SECONDS) — '
-            'email sent only when a hit is found.'
+            'Scheduled WU/financial keyword-repo watch (every REPO_HUNT_INTERVAL_SECONDS) — '
+            'emails when a recent file in a matching repo is VT malicious.'
         )
         header = (
-            'RepoTriage scheduled WU/MTCN scan (every REPO_HUNT_INTERVAL_SECONDS) — '
-            'email sent only when a hit is found.'
+            'RepoTriage scheduled WU/financial repo watch '
+            '(last 10 commits → top 5 newest files → VT) — '
+            'email sent only when a malicious file is found.'
         )
     else:
         msg['Subject'] = (

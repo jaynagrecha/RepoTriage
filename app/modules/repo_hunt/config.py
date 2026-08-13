@@ -25,20 +25,41 @@ def _csv(name: str) -> list[str]:
     return [x.strip() for x in raw.split(',') if x.strip()]
 
 
+# Repo name/description watch — WU/MTCN + broader remittance/money-transfer bait.
 _DEFAULT_WU_REPO_QUERIES = (
-    # Exclude face-detection MTCNN repos that substring-match "mtcn".
-    'mtcn in:name NOT mtcnn',
-    'westernunion in:name',
-    'wupos in:name',
-    'pagofacil in:name',
+    'mtcn in:name,description NOT mtcnn',
+    'westernunion in:name,description',
+    'western_union in:name,description',
+    '"western union" in:name,description',
+    'westernunionbank in:name,description',
+    'wu_receipt in:name,description',
+    'wureceipt in:name,description',
+    'wu-receipt in:name,description',
+    'wupos in:name,description',
+    'pagofacil in:name,description',
+    'pago_facil in:name,description',
+    'moneygram in:name,description',
+    'money_gram in:name,description',
+    'remittance in:name,description',
+    'moneytransfer in:name,description',
+    'money_transfer in:name,description',
+    'remitly in:name,description',
+    'worldremit in:name,description',
+    'xoom in:name,description',
+    'riaremit in:name,description',
+    'ria money in:name,description',
+    'transfast in:name,description',
+    'wu_ in:name',
 )
 
+# Optional code-search extras (filename bait). Repo-watch is the primary path.
 _DEFAULT_WU_CODE_QUERIES = (
-    # Prefer token forms; NOT mtcnn drops CNN/face-detection false positives.
     'filename:mtcn_ OR filename:_mtcn NOT mtcnn',
     'filename:westernunion',
+    'filename:wu_receipt',
     'filename:wupos',
     'filename:pagofacil',
+    'filename:moneygram',
 )
 
 
@@ -55,6 +76,8 @@ class RepoHuntConfig:
     search_max_results: int
     wu_hunt_enabled: bool
     wu_repo_search_queries: list[str]
+    repo_watch_commits: int
+    repo_watch_newest_files: int
     vt_confirm: bool
     vt_api_key: str
     vt_livehunt_rule_id: str
@@ -95,6 +118,8 @@ class RepoHuntConfig:
             search_max_results=_int('REPO_HUNT_SEARCH_MAX_RESULTS', 30),
             wu_hunt_enabled=wu_enabled,
             wu_repo_search_queries=wu_repo_q,
+            repo_watch_commits=_int('REPO_HUNT_REPO_WATCH_COMMITS', 10),
+            repo_watch_newest_files=_int('REPO_HUNT_REPO_WATCH_NEWEST_FILES', 5),
             vt_confirm=_bool('REPO_HUNT_VT_CONFIRM', True),
             vt_api_key=(os.getenv('VT_API_KEY') or '').strip(),
             vt_livehunt_rule_id=(os.getenv('VT_LIVEHUNT_RULE_ID') or '').strip(),

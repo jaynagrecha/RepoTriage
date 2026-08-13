@@ -93,6 +93,11 @@ class TestWuKeywords(unittest.TestCase):
             cfg = RepoHuntConfig.from_env()
         self.assertTrue(any('NOT mtcnn' in q for q in cfg.extra_search_queries))
         self.assertTrue(any('NOT mtcnn' in q for q in cfg.wu_repo_search_queries))
+        self.assertTrue(any('moneygram' in q for q in cfg.wu_repo_search_queries))
+        self.assertTrue(any('remittance' in q for q in cfg.wu_repo_search_queries))
+        self.assertTrue(any('wu_receipt' in q for q in cfg.wu_repo_search_queries))
+        self.assertEqual(cfg.repo_watch_commits, 10)
+        self.assertEqual(cfg.repo_watch_newest_files, 5)
 
 
 class TestAnalysisWuHits(unittest.TestCase):

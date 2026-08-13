@@ -105,7 +105,7 @@ class TestSmtpMessage(unittest.TestCase):
         )
         wu_plain = wu_msg.get_body(preferencelist=('plain',)).get_content()
         wu_html = wu_msg.get_body(preferencelist=('html',)).get_content()
-        self.assertIn('WU/MTCN', wu_msg['Subject'])
+        self.assertIn('WU/Financial', wu_msg['Subject'])
         self.assertIn('scheduled scan', wu_msg['Subject'])
         self.assertIn('mtcn_details_jpg.js', wu_plain)
         self.assertIn('MALICIOUS', wu_html)
@@ -146,6 +146,8 @@ class TestPipelineWebhookHit(unittest.IsolatedAsyncioTestCase):
                 search_max_results=5,
                 wu_hunt_enabled=True,
                 wu_repo_search_queries=[],
+                repo_watch_commits=10,
+                repo_watch_newest_files=5,
                 vt_confirm=False,
                 vt_api_key='',
                 vt_livehunt_rule_id='24949411305',

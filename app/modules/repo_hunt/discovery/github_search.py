@@ -80,7 +80,11 @@ async def _search_code(cfg: RepoHuntConfig, query: str) -> list[Candidate]:
 
 
 async def discover_wu_github_repos(cfg: RepoHuntConfig) -> list[Candidate]:
-    """Repo-name search for WU/MTCN keywords (common dropper-hosting pattern)."""
+    """Repo name/description search for WU + remittance/financial bait keywords.
+
+    Returns repo-level Candidates (not files). Pipeline expands each repo into
+    recent commit files via ``repo_commit_scan``.
+    """
     if not cfg.github_token or not cfg.wu_hunt_enabled:
         return []
     headers = {
@@ -89,33 +93,37 @@ async def discover_wu_github_repos(cfg: RepoHuntConfig) -> list[Candidate]:
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'RepoTriage-RepoHunt',
     }
-    queries = cfg.wu_repo_search_queries or [
-        'mtcn in:name NOT mtcnn',
-        'westernunion in:name',
-        'wupos in:name',
-        'pagofacil in:name',
-    ]
+    queries = list(cfg.wu_repo_search_queries or [])
     out: list[Candidate] = []
     seen: set[str] = set()
     try:
         async with async_client(timeout=40, headers=headers) as client:
             for query in queries:
+                q = (query or '').strip()
+                if not q:
+                    continue
                 try:
                     resp = await client.get(
                         'https://api.github.com/search/repositories',
-                        params={'q': query, 'per_page': min(30, cfg.search_max_results)},
+                        params={
+                            'q': q,
+                            'sort': 'updated',
+                            'order': 'desc',
+                            'per_page': min(30, max(1, cfg.search_max_results)),
+                        },
                     )
                 except httpx.HTTPError as exc:
-                    LOG.warning('github repo search failed for %r: %s: %s', query, exc.__class__.__name__, exc)
+                    LOG.warning('github repo search failed for %r: %s: %s', q, exc.__class__.__name__, exc)
                     continue
                 if resp.status_code >= 400:
+                    LOG.warning('github repo search HTTP %s for %r', resp.status_code, q)
                     continue
                 for item in (resp.json().get('items') or [])[: cfg.search_max_results]:
                     full = (item.get('full_name') or '').strip()
                     html = (item.get('html_url') or '').strip()
                     if not full or not html:
                         continue
-                    key = html.lower()
+                    key = full.lower()
                     if key in seen:
                         continue
                     seen.add(key)
@@ -126,11 +134,13 @@ async def discover_wu_github_repos(cfg: RepoHuntConfig) -> list[Candidate]:
                             path='',
                             repo=full,
                             html_url=html,
-                            extra={'query': query, 'name': item.get('name')},
+                            extra={
+                                'query': q,
+                                'name': item.get('name'),
+                                'description': item.get('description') or '',
+                            },
                         )
                     )
-                    if len(out) >= cfg.max_candidates:
-                        return out
     except Exception as exc:
         LOG.warning('github WU repo discovery aborted: %s: %s', exc.__class__.__name__, exc)
         return out

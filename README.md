@@ -4,6 +4,14 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 
 ## Changelog
 
+### v4.0.0-alpha.38 — Financial / WU keyword repo watch
+
+- Primary hunt path: discover GitHub repos by **WU + remittance/financial keywords** (name/description)
+- For each matching repo: inspect **last 10 commits**, take **top 5 newest files** (no size cap)
+- **VT malicious > 0** on any of those files → `[RepoTriage WU/Financial]` email (no LiveHunt filename token required)
+- Keywords include westernunion / wu_receipt / mtcn / wupos / pagofacil / moneygram / remittance / remitly / worldremit / xoom / …
+- Env: `REPO_HUNT_REPO_WATCH_COMMITS` (default 10), `REPO_HUNT_REPO_WATCH_NEWEST_FILES` (default 5), `REPO_HUNT_WU_REPO_QUERIES` override
+
 ### v4.0.0-alpha.37 — WU/MTCN vs MTCNN false positives
 
 - `_mtcn` keyword match requires a non-alnum boundary so face-detection **MTCNN** / `_mtcnn` paths (e.g. ZQCNN) are not treated as Western Union MTCN
