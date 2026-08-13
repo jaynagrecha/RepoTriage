@@ -1,4 +1,7 @@
 # Render Blueprint — web + worker (Docker). Native Python also works via requirements.txt only.
+#
+# Tunable secrets/settings for the hunt worker use sync: false so values come from
+# the Render Dashboard environment (not hardcoded in this file).
 services:
   - type: web
     name: repotriage-web
@@ -32,12 +35,28 @@ services:
         sync: false
       - key: GITLAB_TOKEN
         sync: false
+      - key: VT_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_TO
+        sync: false
+      - key: REPOTRIAGE_PUBLIC_URL
+        sync: false
     disk:
       name: repotriage-data
       mountPath: /var/data
       sizeGB: 10
 
-  # Always-on 24/7 hunt worker (loops; default interval 5 minutes)
+  # Always-on hunt worker — config/secrets from Render Dashboard env vars
   - type: worker
     name: repotriage-repo-hunt
     runtime: docker
@@ -46,19 +65,41 @@ services:
     envVars:
       - key: PLATFORM_DATA_DIR
         value: /var/data
+      # Set these in the Render Dashboard (Environment). Blueprint will not overwrite them.
       - key: REPO_HUNT_ENABLED
-        value: "true"
+        sync: false
       - key: REPO_HUNT_LOOP
-        value: "true"
+        sync: false
       - key: REPO_HUNT_INTERVAL_SECONDS
-        value: "300"
-      # Global GitHub WU/financial keyword repo watch (not limited to ORGS/USERS)
+        sync: false
       - key: REPO_HUNT_WU_ENABLED
-        value: "true"
+        sync: false
       - key: REPO_HUNT_REPO_WATCH_COMMITS
-        value: "10"
+        sync: false
       - key: REPO_HUNT_REPO_WATCH_NEWEST_FILES
-        value: "5"
+        sync: false
+      - key: REPO_HUNT_WU_REPO_QUERIES
+        sync: false
+      - key: REPO_HUNT_EXTRA_SEARCH_QUERIES
+        sync: false
+      - key: REPO_HUNT_SEARCH_QUERY
+        sync: false
+      - key: REPO_HUNT_SEARCH_MAX_RESULTS
+        sync: false
+      - key: REPO_HUNT_MAX_CANDIDATES
+        sync: false
+      - key: REPO_HUNT_TO_EMAIL
+        sync: false
+      - key: REPO_HUNT_GITHUB_ORGS
+        sync: false
+      - key: REPO_HUNT_GITHUB_USERS
+        sync: false
+      - key: REPO_HUNT_WEBHOOK_SECRET
+        sync: false
+      - key: REPO_HUNT_VT_CONFIRM
+        sync: false
+      - key: ANALYSIS_ALERT_EMAIL
+        sync: false
       - key: GITHUB_TOKEN
         sync: false
       - key: VT_API_KEY
@@ -70,25 +111,19 @@ services:
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
-        value: "587"
+        sync: false
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASSWORD
         sync: false
       - key: SMTP_FROM
         sync: false
-      - key: REPO_HUNT_TO_EMAIL
+      - key: SMTP_TO
         sync: false
-      - key: REPO_HUNT_GITHUB_ORGS
-        sync: false
-      - key: REPO_HUNT_GITHUB_USERS
-        sync: false
-      - key: REPO_HUNT_WEBHOOK_SECRET
+      - key: SMTP_USE_TLS
         sync: false
       - key: REPOTRIAGE_PUBLIC_URL
         sync: false
-      - key: ANALYSIS_ALERT_EMAIL
-        value: "true"
     disk:
       name: repotriage-data
       mountPath: /var/data
@@ -115,6 +150,8 @@ services:
       - key: GITHUB_TOKEN
         sync: false
       - key: GITLAB_TOKEN
+        sync: false
+      - key: VT_API_KEY
         sync: false
     disk:
       name: repotriage-data

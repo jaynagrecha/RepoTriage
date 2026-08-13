@@ -10,8 +10,9 @@ GitHub and GitLab Payload Intelligence Platform — public job-based file URL an
 - Keywords: WU + remittance/financial bait (westernunion / wu_receipt / mtcn / wupos / pagofacil / moneygram / remittance / remitly / worldremit / xoom / …)
 - For each matching repo: **last 10 commits** → **top 5 newest files** (no size cap) → VirusTotal
 - **VT malicious > 0** → `[RepoTriage WU/Financial]` email (no LiveHunt filename token required)
-- Worker defaults: `REPO_HUNT_LOOP=true`, `REPO_HUNT_INTERVAL_SECONDS=300` (every 5 minutes)
-- Env: `REPO_HUNT_REPO_WATCH_COMMITS`, `REPO_HUNT_REPO_WATCH_NEWEST_FILES`, `REPO_HUNT_WU_REPO_QUERIES` override
+- Runtime config comes from **Render Dashboard env vars** on `repotriage-repo-hunt` (`sync: false` in `render.yaml` — blueprint does not overwrite them)
+- Recommended on Render: `REPO_HUNT_ENABLED=true`, `REPO_HUNT_LOOP=true`, `REPO_HUNT_INTERVAL_SECONDS=300`, plus `GITHUB_TOKEN`, `VT_API_KEY`, SMTP / `REPO_HUNT_TO_EMAIL`
+- Optional overrides: `REPO_HUNT_REPO_WATCH_COMMITS`, `REPO_HUNT_REPO_WATCH_NEWEST_FILES`, `REPO_HUNT_WU_REPO_QUERIES`
 
 ### v4.0.0-alpha.37 — WU/MTCN vs MTCNN false positives
 
